@@ -86,10 +86,11 @@ RULES_CATALOG: dict[str, RuleMetadata] = {
             "(such as anthropics/claude-code-action prior to v1.0.94) or pinning to a mutable branch (@main/@master) "
             "exposes the pipeline to supply-chain and prompt-injection exploits."
         ),
-        remediation=(
-            "Upgrade the AI GitHub Action to at least its minimum safe release (e.g. v1.0.94+) and pin "
-            "to an immutable full-length commit SHA or verified release tag."
+       remediation=(
+            "Upgrade the tool to its latest safe release and pin it to an immutable "
+            "full-length commit SHA or verified release tag."
         ),
+
         references=[
             "https://github.com/anthropics/claude-code-action/releases/tag/v1.0.94",
         ],
