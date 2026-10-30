@@ -73,6 +73,7 @@ RULES_CATALOG: dict[str, RuleMetadata] = {
         ),
         references=[
             "https://github.com/anthropics/claude-code-action/releases/tag/v1.0.94",
+            "https://thehackernews.com/2026/06/claude-code-github-action-flaw-let-one.html",
         ],
     ),
     "AIA004": RuleMetadata(

@@ -111,7 +111,7 @@ ci-agent-audit scan .github/workflows --fix
 
 `--fix` handles three cases:
 
-- Upgrades `anthropics/claude-code-action` from a branch or vulnerable version to `v1.0.94`.
+- Upgrades `anthropics/claude-code-action` from a vulnerable version to `v1.0.94`, the minimum safe version. Choose a newer release if you can.
 - Clears `"*"` from `allowed_non_write_users` and `allowed_bots`.
 - Replaces `permissions: write-all` with `contents: read`.
 

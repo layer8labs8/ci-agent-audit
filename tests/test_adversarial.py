@@ -850,6 +850,13 @@ def test_fixer_keeps_yaml_valid_at_any_indent(scope: str, source: str, reader) -
     assert reader(yaml.safe_load(fixed)) == {"contents": "read"}, scope
 
 
+def test_fixer_does_not_downgrade_branch_refs() -> None:
+    source = "jobs:\n  a:\n    steps:\n      - uses: anthropics/claude-code-action@main\n"
+    fixed, notes = apply_fixes_to_text(source)
+    assert fixed == source
+    assert notes == []
+
+
 def test_fixer_refuses_to_emit_invalid_yaml() -> None:
     source = "on: push\njobs: [\n  permissions: write-all\n"
     fixed, notes = apply_fixes_to_text(source)

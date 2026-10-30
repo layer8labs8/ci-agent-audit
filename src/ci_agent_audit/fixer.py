@@ -25,13 +25,11 @@ def apply_fixes_to_text(content: str) -> tuple[str, list[str]]:
     text = content
     newline = "\r\n" if "\r\n" in content else "\n"
 
-    # Fix 1 (AIA004): Upgrade vulnerable anthropics/claude-code-action versions (< 1.0.94 or @main/@master)
+    # Fix 1 (AIA004): Upgrade vulnerable anthropics/claude-code-action versions (< 1.0.94)
+    # Branch refs are left alone: pinning @main to the safe minimum would be a large downgrade
     def _upgrade_claude_action(match: re.Match[str]) -> str:
         prefix = match.group(1)
         ver = match.group(2)
-        if ver.lower() in {"main", "master", "head", "latest"}:
-            descriptions.append(f"Pinned {prefix}@{ver} to @v1.0.94 (AIA004)")
-            return f"{prefix}@v1.0.94"
         cleaned = ver.lstrip("vV")
         parts = cleaned.split(".")
         if len(parts) == 3 and all(p.isdigit() for p in parts):
