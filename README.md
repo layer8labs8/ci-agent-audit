@@ -4,11 +4,10 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](pyproject.toml)
-![Status: pre-release](https://img.shields.io/badge/status-pre--release-orange.svg)
+[![PyPI](https://img.shields.io/pypi/v/ci-agent-audit.svg)](https://pypi.org/project/ci-agent-audit/)
+![Status: alpha](https://img.shields.io/badge/status-alpha-orange.svg)
 
 `ci-agent-audit` reads your GitHub Actions and GitLab CI files and warns you when an AI agent such as Claude Code, Gemini CLI, or Codex is set up in a way that an outsider could abuse. It only reads YAML files. It never runs your workflows, calls an AI model, or sends anything over the network.
-
-> **Pre-release:** not on PyPI or the GitHub Marketplace yet. For now, install it from source.
 
 ## The problem in 30 seconds
 
@@ -38,12 +37,18 @@ Regular CI linters look for a different problem: untrusted text in shell command
 
 ## Try it in one minute
 
-The repository includes a deliberately insecure sample workflow:
+Install it and scan your project from its root folder:
+
+```bash
+pip install ci-agent-audit
+ci-agent-audit scan
+```
+
+To see it find problems, try the deliberately insecure sample in this repository:
 
 ```bash
 git clone https://github.com/layer8labs8/ci-agent-audit.git
 cd ci-agent-audit
-pip install .
 ci-agent-audit scan tests/fixtures/workflows/vulnerable.yml
 ```
 
@@ -60,12 +65,6 @@ The scan ends with a summary:
 
 ```text
 ✗ ci-agent-audit: Found 7 issue(s) (2 critical, 4 high, 1 medium, 0 low).
-```
-
-To scan your own project, run this from its root folder:
-
-```bash
-ci-agent-audit scan
 ```
 
 ## What it checks
@@ -118,8 +117,6 @@ ci-agent-audit scan .github/workflows --fix
 Review the changes before you commit them, because your agent may need a permission that `--fix` removed. If a change would produce invalid YAML, the file is left as it was.
 
 ## Use it in CI
-
-> Available after the first tagged release.
 
 Add this as `.github/workflows/ai-security.yml`:
 
