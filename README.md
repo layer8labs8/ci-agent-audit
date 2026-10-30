@@ -133,7 +133,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: layer8labs8/ci-agent-audit@v0.1.0
+      - uses: layer8labs8/ci-agent-audit@v0.1.1
         with:
           paths: .github/workflows
           fail-on: high
@@ -151,7 +151,7 @@ To run it as a [pre-commit](https://pre-commit.com) hook instead:
 ```yaml
 repos:
   - repo: https://github.com/layer8labs8/ci-agent-audit
-    rev: v0.1.0
+    rev: v0.1.1
     hooks:
       - id: ci-agent-audit
 ```

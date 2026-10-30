@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.1.1 (2026-10-31)
+
+### Added
+
+- `AIA010` follows model output through env vars, `$GITHUB_ENV`, step and job outputs, files, and `actions/github-script`.
+- `AIA008` detects more ways to check out PR code, including `refs/pull/`, `merge_commit_sha`, `gh pr checkout`, and `git fetch`.
+
+### Changed
+
+- Fixed label checks count as guards, and guards on every branch of an `if:` count as complete.
+- Severity is lower when an agent has no shell, when PR code is in an isolated folder, or when a current `actions/checkout` would refuse fork PR code.
+- The `AIA004` advice now applies to every AI tool. Thanks to @kenzyyshahin.
+
+### Fixed
+
+- Negated checks such as `!endsWith(github.actor, '[bot]')` no longer count as spoofable.
+- `structured_output` is now treated as model text.
+- `--fix` no longer changes branch refs to an older version.
+
 ## 0.1.0 (2026-10-30)
 
 First public release.
