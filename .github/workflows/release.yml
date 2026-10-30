@@ -3,12 +3,32 @@ name: Release
 on:
   push:
     tags: ["v*.*.*"]
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
+  verify-publisher:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - name: Confirm that PyPI accepts this workflow, without publishing
+        run: |
+          audience="$(curl -fsS https://pypi.org/_/oidc/audience | jq -r .audience)"
+          oidc="$(curl -fsS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=$audience" | jq -r .value)"
+          echo "::add-mask::$oidc"
+          code="$(jq -n --arg token "$oidc" '{token: $token}' | curl -sS -o /dev/null -w '%{http_code}' \
+            -X POST https://pypi.org/_/oidc/mint-token -H 'Content-Type: application/json' -d @-)"
+          echo "PyPI responded with HTTP $code"
+          test "$code" = "200"
+
   build:
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
