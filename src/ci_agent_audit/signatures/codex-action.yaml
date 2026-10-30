@@ -1,0 +1,30 @@
+id: codex-action
+name: OpenAI Codex CLI & GitHub Action
+vendor: OpenAI
+description: OpenAI Codex terminal coding agent for CI/CD automation and pull request handling.
+action_prefixes:
+  - openai/codex-action
+  - openai/codex-github-action
+cli_binaries:
+  - codex
+cli_packages:
+  - "@openai/codex"
+prompt_inputs:
+  - prompt
+  - instructions
+  - task
+cli_prompt_flags:
+  - -q
+  - --quiet
+  - --prompt
+dangerous_inputs:
+  approval_policy: "never"
+  full_auto: "true"
+  allow-users: "*"
+dangerous_arg_patterns:
+  - pattern: "--dangerously-auto-approve-everything"
+    reason: "Disables both approval prompts and sandboxing in OpenAI Codex CLI."
+  - pattern: "--full-auto"
+    reason: "Allows autonomous command execution and file modification in Codex CLI."
+  - pattern: "--approval-mode\\s+full-auto"
+    reason: "Allows autonomous command execution without confirmation."

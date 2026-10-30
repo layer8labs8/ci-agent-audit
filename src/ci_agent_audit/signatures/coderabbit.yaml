@@ -1,0 +1,18 @@
+id: coderabbit
+name: CodeRabbit AI PR Reviewer Action
+vendor: CodeRabbit
+description: AI pull request reviewer and summarizer action for GitHub workflows.
+action_prefixes:
+  - coderabbitai/ai-pr-reviewer
+  - coderabbitai/coderabbit-action
+cli_binaries:
+  - coderabbit
+prompt_inputs:
+  - system_message
+  - summarize_prompt
+  - review_prompt
+  - custom_instructions
+cli_prompt_flags:
+  - --prompt
+dangerous_inputs: {}
+dangerous_arg_patterns: []

@@ -1,0 +1,19 @@
+id: github-ai-inference
+name: GitHub Models AI Inference Action
+vendor: GitHub
+description: Official GitHub Action for running LLM inference and tool-calling prompts via GitHub Models.
+action_prefixes:
+  - actions/ai-inference
+cli_binaries:
+  - gh-models
+prompt_inputs:
+  - prompt
+  - system-prompt
+  - prompt-file
+cli_prompt_flags:
+  - --prompt
+dangerous_inputs: {}
+dangerous_arg_patterns:
+  - pattern: "--allow-tool-execution"
+    reason: "Permits automated execution of external tools from LLM inference output."
+advisory_url: "https://www.aikido.dev/blog/promptpwnd-github-actions-ai-agents"

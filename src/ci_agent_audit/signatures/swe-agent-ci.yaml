@@ -1,0 +1,20 @@
+id: swe-agent-ci
+name: SWE-agent Autonomous Coding Runner
+vendor: Princeton NLP / SWE-agent
+description: SWE-agent CLI and workflow action for automated GitHub issue resolution.
+action_prefixes:
+  - SWE-agent/SWE-agent-action
+  - princeton-nlp/SWE-agent
+cli_binaries:
+  - sweagent
+prompt_inputs:
+  - problem_statement
+  - issue_url
+  - prompt
+cli_prompt_flags:
+  - --problem_statement.text
+  - --problem_statement.github_url
+dangerous_inputs: {}
+dangerous_arg_patterns:
+  - pattern: "--environment\\.deployment\\.type=local"
+    reason: "Executes SWE-agent commands directly on the CI runner host without Docker isolation."

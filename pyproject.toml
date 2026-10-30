@@ -1,0 +1,62 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ci-agent-audit"
+version = "0.1.0"
+description = "Static security auditor for AI-powered CI/CD workflows (GitHub Actions & GitLab CI). Detects PromptPwnd indirect prompt injections, [bot] actor bypasses, dangerous agent flags, and unpinned MCP runners."
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.10"
+authors = [
+    { name = "ci-agent-audit contributors" }
+]
+keywords = [
+    "security",
+    "github-actions",
+    "ci-cd",
+    "prompt-injection",
+    "promptpwnd",
+    "claude-code",
+    "gemini-cli",
+    "mcp",
+    "static-analysis",
+    "sarif",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Information Technology",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Security",
+    "Topic :: Software Development :: Quality Assurance",
+]
+dependencies = [
+    "PyYAML>=6.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+]
+
+[project.scripts]
+ci-agent-audit = "ci_agent_audit.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+ci_agent_audit = ["signatures/*.yaml"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

@@ -1,0 +1,27 @@
+id: run-gemini-cli
+name: Google Gemini CLI GitHub Action
+vendor: Google
+description: Official GitHub Action and CLI for running Google Gemini coding agent in CI/CD pipelines.
+action_prefixes:
+  - google-github-actions/run-gemini-cli
+  - google-gemini/gemini-cli-action
+cli_binaries:
+  - gemini
+cli_packages:
+  - "@google/gemini-cli"
+prompt_inputs:
+  - prompt
+  - instruction
+  - system_instruction
+cli_prompt_flags:
+  - -p
+  - --prompt
+dangerous_inputs: {}
+dangerous_arg_patterns:
+  - pattern: "--yolo"
+    reason: "Enables unrestricted auto-approval of all tool calls and shell commands in Gemini CLI."
+  - pattern: "--approval-mode\\s+auto_edit"
+    reason: "Automatically approves file edits without verification."
+  - pattern: "--sandbox=false"
+    reason: "Explicitly disables sandboxing for Gemini CLI tool execution."
+advisory_url: "https://www.aikido.dev/blog/promptpwnd-github-actions-ai-agents"

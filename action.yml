@@ -1,0 +1,65 @@
+name: "CI Agent Audit (PromptPwnd & AI Workflow Security)"
+description: "Audit GitHub Actions & GitLab CI workflows for AI prompt injection (PromptPwnd), [bot] bypasses, over-privileged tokens, and unpinned MCP servers."
+branding:
+  icon: "shield"
+  color: "purple"
+
+inputs:
+  paths:
+    description: "Paths to workflow files or directories to scan"
+    required: false
+    default: ".github/workflows"
+  severity:
+    description: "Minimum severity to report (low, medium, high, critical)"
+    required: false
+    default: "low"
+  fail-on:
+    description: "Minimum severity to fail the exit code on (low, medium, high, critical, none)"
+    required: false
+    default: "high"
+  sarif-output:
+    description: "Optional path to write SARIF v2.1.0 report for GitHub Security tab"
+    required: false
+    default: ""
+
+runs:
+  using: "composite"
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+      with:
+        python-version: "3.12"
+
+    - name: Install ci-agent-audit
+      shell: bash
+      run: |
+        python -m pip install --upgrade pip
+        python -m pip install "${{ github.action_path }}"
+
+    - name: Run ci-agent-audit (GitHub Annotations)
+      shell: bash
+      env:
+        INPUT_PATHS: ${{ inputs.paths }}
+        INPUT_SEVERITY: ${{ inputs.severity }}
+        INPUT_FAIL_ON: ${{ inputs.fail-on }}
+      run: |
+        read -r -a scan_paths <<< "$INPUT_PATHS"
+        ci-agent-audit scan "${scan_paths[@]}" \
+          --severity "$INPUT_SEVERITY" \
+          --fail-on "$INPUT_FAIL_ON" \
+          --format github
+
+    - name: Generate SARIF report (if requested)
+      if: ${{ always() && inputs.sarif-output != '' }}
+      shell: bash
+      env:
+        INPUT_PATHS: ${{ inputs.paths }}
+        INPUT_SEVERITY: ${{ inputs.severity }}
+        INPUT_SARIF_OUTPUT: ${{ inputs.sarif-output }}
+      run: |
+        read -r -a scan_paths <<< "$INPUT_PATHS"
+        ci-agent-audit scan "${scan_paths[@]}" \
+          --severity "$INPUT_SEVERITY" \
+          --fail-on none \
+          --format sarif \
+          --output "$INPUT_SARIF_OUTPUT"

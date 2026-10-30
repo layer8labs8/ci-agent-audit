@@ -1,0 +1,7 @@
+- id: ci-agent-audit
+  name: Audit AI-powered CI/CD workflows (PromptPwnd & Agent Security)
+  description: Static security analyzer for GitHub Actions and GitLab CI workflows that invoke AI agents (Claude Code, Gemini CLI, Codex, MCP).
+  entry: ci-agent-audit scan
+  language: python
+  files: ^(\.github/workflows/.*\.ya?ml|\.gitlab-ci\.ya?ml)$
+  types: [yaml]

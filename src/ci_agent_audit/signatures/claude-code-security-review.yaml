@@ -1,0 +1,15 @@
+id: claude-code-security-review
+name: Anthropic Claude Code Security Review Action
+vendor: Anthropic
+description: Automated security code review GitHub Action powered by Claude Code.
+action_prefixes:
+  - anthropics/claude-code-security-review
+cli_binaries: []
+prompt_inputs:
+  - custom-security-scan-instructions
+  - prompt
+  - direct_prompt
+dangerous_inputs: {}
+dangerous_arg_patterns:
+  - pattern: "--dangerously-skip-permissions"
+    reason: "Bypasses Claude Code permission checks during security scan."

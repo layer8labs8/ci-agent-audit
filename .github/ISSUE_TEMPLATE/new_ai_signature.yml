@@ -1,0 +1,27 @@
+name: Add New AI Action / CLI Signature
+description: Propose or contribute a 1-file YAML security signature for an AI GitHub Action, GitLab CI agent, or CLI tool.
+title: "[Signature]: Add support for <org/action-or-cli>"
+labels: ["good first issue", "signature"]
+body:
+  - type: input
+    id: repo_url
+    attributes:
+      label: AI Action or CLI Repository URL
+      description: Link to the public GitHub repository or documentation for the AI tool.
+      placeholder: "https://github.com/org/ai-action"
+    validations:
+      required: true
+  - type: textarea
+    id: prompt_sinks
+    attributes:
+      label: Prompt Input Parameters / CLI Flags
+      description: Which `with:` inputs or CLI flags accept prompt text or instructions?
+      placeholder: "prompt, custom_instructions, -p"
+    validations:
+      required: true
+  - type: textarea
+    id: dangerous_flags
+    attributes:
+      label: Auto-Approval / Permission Bypass Flags (Optional)
+      description: Any flags or inputs that bypass confirmation, sandboxing, or actor restrictions.
+      placeholder: "--yolo, --dangerously-skip-permissions"

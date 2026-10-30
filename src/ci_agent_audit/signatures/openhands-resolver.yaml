@@ -1,0 +1,22 @@
+id: openhands-resolver
+name: OpenHands Autonomous Issue Resolver
+vendor: All Hands AI
+description: OpenHands (formerly OpenDevin) CI action and CLI that autonomously resolves GitHub issues and PR comments.
+action_prefixes:
+  - All-Hands-AI/OpenHands
+  - All-Hands-AI/openhands-resolver
+  - OpenDevin/OpenDevin
+cli_binaries:
+  - openhands
+prompt_inputs:
+  - prompt
+  - custom_instructions
+  - task
+  - issue_body
+cli_prompt_flags:
+  - -t
+  - --task
+dangerous_inputs: {}
+dangerous_arg_patterns:
+  - pattern: "--no-sandbox"
+    reason: "Runs OpenHands agent directly on the CI runner host without container isolation."

@@ -1,0 +1,20 @@
+id: pr-agent
+name: Qodo (CodiumAI) PR-Agent Action
+vendor: Qodo
+description: AI-powered automated pull request reviewer, describer, and code improver for GitHub Actions and GitLab CI.
+action_prefixes:
+  - Codium-ai/pr-agent
+  - qodo-ai/pr-agent
+cli_binaries:
+  - pr-agent
+prompt_inputs:
+  - extra_instructions
+  - custom_prompt
+  - pr_reviewer.extra_instructions
+  - pr_code_suggestions.extra_instructions
+cli_prompt_flags:
+  - --extra_instructions
+dangerous_inputs: {}
+dangerous_arg_patterns:
+  - pattern: "--auto_approve"
+    reason: "Allows PR-Agent to automatically approve pull requests in CI."

@@ -1,0 +1,35 @@
+id: claude-code-action
+name: Anthropic Claude Code GitHub Action
+vendor: Anthropic
+description: Official Claude Code action and CLI for automated PR review, issue triage, and agentic coding in GitHub Actions.
+action_prefixes:
+  - anthropics/claude-code-action
+  - anthropics/claude-code-base-action
+non_agent_actions:
+  - anthropics/claude-code-action/agent-approval-check
+cli_binaries:
+  - claude
+cli_packages:
+  - "@anthropic-ai/claude-code"
+prompt_inputs:
+  - prompt
+  - direct_prompt
+  - custom_instructions
+  - system_prompt
+cli_prompt_flags:
+  - -p
+  - --prompt
+  - --system-prompt
+  - --append-system-prompt
+dangerous_inputs:
+  allowed_non_write_users: "*"
+  allowed_bots: "*"
+dangerous_arg_patterns:
+  - pattern: "--dangerously-skip-permissions"
+    reason: "Disables all Claude Code tool and bash execution permission boundaries in CI."
+  - pattern: "--permission-mode\\s+bypassPermissions"
+    reason: "Skips every permission check, like --dangerously-skip-permissions."
+  - pattern: "Bash\\(\\*\\)"
+    reason: "Grants unrestricted shell command execution to the Claude agent."
+min_safe_version: "1.0.94"
+advisory_url: "https://github.com/anthropics/claude-code-action/releases/tag/v1.0.94"

@@ -1,0 +1,21 @@
+id: continue-ci
+name: Continue.dev Headless CI Agent
+vendor: Continue
+description: Continue CLI (`cn`) and GitHub Action for headless coding agent checks and automated PR fixes in CI.
+action_prefixes:
+  - continuedev/continue-action
+  - continuedev/continue-ci
+cli_binaries:
+  - cn
+  - continue-cli
+prompt_inputs:
+  - prompt
+  - instructions
+  - rule
+cli_prompt_flags:
+  - -p
+  - --prompt
+dangerous_inputs: {}
+dangerous_arg_patterns:
+  - pattern: "--allow-all-tools"
+    reason: "Enables all tools including bash execution without confirmation in Continue CLI."

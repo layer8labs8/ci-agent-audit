@@ -1,0 +1,27 @@
+id: goose-ci
+name: Block Goose Autonomous Agent CLI & Action
+vendor: Block
+description: Block's Goose autonomous developer agent running in CI/CD pipelines.
+action_prefixes:
+  - block/goose-action
+  - square/goose-action
+cli_binaries:
+  - goose
+cli_subcommands:
+  - run
+  - session
+prompt_inputs:
+  - instructions
+  - text
+  - prompt
+  - recipe
+cli_prompt_flags:
+  - -t
+  - --text
+  - --instructions
+dangerous_inputs: {}
+dangerous_arg_patterns:
+  - pattern: "GOOSE_MODE=auto"
+    reason: "Runs Goose in autonomous mode where all tool calls and shell commands execute without confirmation."
+  - pattern: "--mode\\s+auto"
+    reason: "Runs Goose in autonomous mode without human approval."
