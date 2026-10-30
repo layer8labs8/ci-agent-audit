@@ -1,0 +1,39 @@
+name: Report a false alarm or missed attack
+description: Tell us when ci-agent-audit flags something safe or misses something risky.
+title: "[Detection]: <short summary>"
+labels: ["detection"]
+body:
+  - type: dropdown
+    id: kind
+    attributes:
+      label: What happened?
+      options:
+        - It flagged something safe (false alarm)
+        - It missed something risky (missed attack)
+    validations:
+      required: true
+  - type: input
+    id: rule
+    attributes:
+      label: Rule ID
+      description: Leave this empty if nothing was reported.
+      placeholder: AIA001
+  - type: textarea
+    id: workflow
+    attributes:
+      label: Minimal workflow
+      description: Share the smallest workflow that shows the problem. Remove private names and secrets first.
+      render: yaml
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect, and why?
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Output of `ci-agent-audit --version`.

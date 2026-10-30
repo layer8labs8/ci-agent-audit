@@ -43,6 +43,10 @@ python -m ci_agent_audit.cli validate-signatures
 
 3. **Open a Pull Request** referencing the AI Action/CLI repository documentation!
 
+## Report a Detection Problem
+
+A minimal workflow that gets a wrong result is a great first contribution. Open a **false alarm or missed attack** issue, or add it as a test in `tests/test_adversarial.py`.
+
 ## Running Development Tests
 
 ```bash

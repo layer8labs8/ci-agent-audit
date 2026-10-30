@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "ci-agent-audit"
 version = "0.1.0"
-description = "Static security auditor for AI-powered CI/CD workflows (GitHub Actions & GitLab CI). Detects PromptPwnd indirect prompt injections, [bot] actor bypasses, dangerous agent flags, and unpinned MCP runners."
+description = "Find prompt injection and unsafe AI agent setups in GitHub Actions and GitLab CI."
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.10"
@@ -23,9 +23,12 @@ keywords = [
     "mcp",
     "static-analysis",
     "sarif",
+    "ai-security",
+    "gitlab-ci",
+    "codex",
 ]
 classifiers = [
-    "Development Status :: 4 - Beta",
+    "Development Status :: 3 - Alpha",
     "Environment :: Console",
     "Intended Audience :: Developers",
     "Intended Audience :: Information Technology",
@@ -42,6 +45,10 @@ classifiers = [
 dependencies = [
     "PyYAML>=6.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/layer8labs8/ci-agent-audit"
+Issues = "https://github.com/layer8labs8/ci-agent-audit/issues"
 
 [project.optional-dependencies]
 dev = [
