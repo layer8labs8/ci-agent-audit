@@ -79,7 +79,7 @@ The scan ends with a summary:
 | Does the agent hold too much access? | A hijacked agent with write access can change your code. | `AIA005` |
 | Can the agent send data anywhere? | With no network limits, stolen secrets can leave the runner. | `AIA006` |
 | Does CI download MCP servers with no fixed version? | A compromised package would run next to your secrets. | `AIA007` |
-| Does a privileged job run the agent on untrusted PR code? | Files in the PR can run with your repository's secrets. | `AIA008` |
+| Does a privileged job run the agent on untrusted PR code? | Files in the PR can run with your repository's secrets. Reported as High when a current `actions/checkout` would refuse fork PR code. | `AIA008` |
 | Does the model's answer reach a shell or git command? | A hijacked answer becomes a command or a checkout of attacker code. | `AIA010` |
 | Is agent work pushed straight to `main`? | Injected changes land without review. | `AIA011` |
 
@@ -190,7 +190,7 @@ A scanner finds risky patterns, not proven attacks. A clean report does not mean
 - It doesn't follow data through artifacts, caches, or custom scripts.
 - It can't detect agents that read issues through their own built-in tools when the workflow doesn't mention them.
 - It flags untrusted data anywhere in a `run:` block that starts an agent, even if the agent never reads that data.
-- It reads guards from `if:` text. An `if:` with `||` only counts as partial protection, because the scan can't tell which paths it covers.
+- It reads guards from `if:` text, including fixed label checks. An `if:` with `||` only counts as partial protection, because the scan can't tell which paths it covers.
 - It takes `sandbox: read-only` as written and doesn't verify what the sandbox enforces.
 
 ## Contributing

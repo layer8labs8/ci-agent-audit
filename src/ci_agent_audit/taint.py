@@ -24,6 +24,9 @@ UNTRUSTED_GITHUB_CONTEXT_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"github\.head_ref", re.IGNORECASE),
 )
 
+# Outputs agent actions report about the run itself, which are not model text
+AGENT_METADATA_OUTPUTS = {"execution_file", "conclusion", "session_id", "branch_name", "github_token"}
+
 # Whole event objects embed attacker-controlled fields once serialized (e.g. `toJSON(github.event.issue)`).
 # Outside toJSON they render as "Object" or act as booleans, so they carry no text.
 UNTRUSTED_WHOLE_OBJECT_RE = re.compile(
@@ -61,6 +64,8 @@ GROUP_REDIRECT_RE = re.compile(r"^\s*\}\s*>>\s*[\"']?\$\{?GITHUB_(ENV|OUTPUT)\}?
 FILE_WRITE_RE = re.compile(r"(?<![\d&>])>{1,2}\s*[\"']?(\$\{?\w+\}?|[\w./-]*[A-Za-z][\w./-]*)")
 LITERAL_ASSIGN_RE = re.compile(r"^\s*(?:export\s+)?([A-Za-z_]\w*)=[\"']?([\w./-]+)[\"']?\s*$")
 SET_OUTPUT_RE = re.compile(r"core\.setOutput\(\s*['\"]([\w-]+)['\"]\s*,\s*([^\n]*)\)")
+STEP_OUTPUT_RE = re.compile(r"\bsteps\.([\w-]+)\.outputs\.([\w-]+)", re.IGNORECASE)
+FILE_HEREDOC_RE = re.compile(r"^\s*cat\s+<<-?\s*[\"']?(\w+)[\"']?\s*>\s*[\"']?([^\s\"'>]+)")
 USER_TEXT_FIELD_RE = re.compile(r"\b(?:body|title|comments)\b")
 EXPORT_LINE_RE = re.compile(r"(?:echo|printf)\s+(?:-\S+\s+)*[\"']?([A-Za-z_][\w-]*)(=|<<)([\"']?)(\w*)")
 
@@ -158,12 +163,14 @@ def find_all_taint_sources(
     value: str,
     tainted_env: Mapping[str, list[str]] | None = None,
     tainted_refs: Mapping[str, list[str]] | None = None,
+    *,
+    include_events: bool = True,
 ) -> list[str]:
     """Return direct untrusted sources plus any sources propagated via `env:` or step/job outputs."""
     if not value or not isinstance(value, str):
         return []
 
-    sources = find_direct_untrusted_sources(value)
+    sources = find_direct_untrusted_sources(value) if include_events else []
     if tainted_env:
         for env_name, env_sources in tainted_env.items():
             if references_env_var(value, env_name):
@@ -211,16 +218,36 @@ class TaintState:
     refs: dict[str, list[str]] = field(default_factory=dict)
     files: dict[str, list[str]] = field(default_factory=dict)
     subject_fields_empty: bool = False
+    agent_steps: set[str] = field(default_factory=set)
+    # Tracks model text alone, so event data and `gh` output are not mistaken for it
+    agent_only: bool = False
 
     def scoped(self, step_env: Mapping[str, object] | None) -> dict[str, list[str]]:
         """Return the tainted env map as seen by a step with its own `env:` block."""
-        return collect_tainted_env_map(step_env, base=self.env, tainted_refs=self.refs)
+        if not self.agent_only:
+            return collect_tainted_env_map(step_env, base=self.env, tainted_refs=self.refs)
+        env = dict(self.env)
+        for key, value in (step_env or {}).items():
+            sources = self.sources(str(value or ""), env)
+            if sources:
+                env[str(key)] = sources
+            else:
+                env.pop(str(key), None)
+        return env
+
+    def _agent_sources(self, value: str) -> list[str]:
+        return [
+            f"agent output (steps.{step_id}.outputs.{output})"
+            for step_id, output in STEP_OUTPUT_RE.findall(value)
+            if step_id.lower() in self.agent_steps and output.lower() not in AGENT_METADATA_OUTPUTS
+        ]
 
     def sources(self, value: str, tainted_env: Mapping[str, list[str]]) -> list[str]:
-        found = find_all_taint_sources(value, tainted_env, self.refs)
+        found = find_all_taint_sources(value, tainted_env, self.refs, include_events=not self.agent_only)
         for name, file_sources in self.files.items():
             if re.search(rf"(?<![\w.-]){re.escape(name)}(?![\w-])", value):
                 found.extend(f"{src} (via file {name})" for src in file_sources)
+        found.extend(self._agent_sources(value))
         if self.subject_fields_empty:
             found = [src for src in found if not SUBJECT_EVENT_FIELD_RE.match(src)]
         return found
@@ -248,12 +275,25 @@ class TaintState:
         lines = run.replace("\\\n", " ").splitlines()
         group_targets = _group_redirect_targets(lines)
         heredoc: tuple[str, str, str] | None = None
+        file_heredoc: tuple[str, str] | None = None
 
         for idx, line in enumerate(lines):
             sources = self.sources(line, local)
-            fetched = _reads_untrusted_text(line)
+            fetched = None if self.agent_only else _reads_untrusted_text(line)
             if fetched:
                 sources = [*sources, fetched]
+
+            if file_heredoc is not None:
+                delimiter, name = file_heredoc
+                if line.strip() == delimiter:
+                    file_heredoc = None
+                elif sources:
+                    self.files[name.rsplit("/", 1)[-1]] = sources
+                continue
+            opened_file = FILE_HEREDOC_RE.search(line)
+            if opened_file:
+                file_heredoc = (opened_file.group(1), opened_file.group(2))
+                continue
 
             if heredoc is not None:
                 target, name, delimiter = heredoc

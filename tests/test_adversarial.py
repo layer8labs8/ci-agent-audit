@@ -719,6 +719,261 @@ def test_read_only_token_lowers_cli_taint_to_high(tmp_path: Path) -> None:
     assert _severity(tmp_path, jobs, "AIA001") == "high"
 
 
+def test_structured_output_is_model_text(tmp_path: Path) -> None:
+    jobs = """
+    jobs:
+      ai:
+        runs-on: ubuntu-latest
+        steps:
+          - id: analyze
+            uses: anthropics/claude-code-action@v1.0.100
+            with:
+              prompt: "Analyze"
+          - run: |
+              cat <<'EOF' > /tmp/output.json
+              ${{ steps.analyze.outputs.structured_output }}
+              EOF
+    """
+    assert _severity(tmp_path, jobs, "AIA010") == "critical"
+
+
+def test_model_output_relayed_by_a_step_stays_tracked(tmp_path: Path) -> None:
+    jobs = """
+    jobs:
+      ai:
+        runs-on: ubuntu-latest
+        steps:
+          - id: analyze
+            uses: anthropics/claude-code-action@v1.0.100
+            with:
+              prompt: "Analyze"
+          - id: parse
+            env:
+              RESULT: ${{ steps.analyze.outputs.structured_output }}
+            run: echo "reason=$(jq -r .reason <<< "$RESULT")" >> "$GITHUB_OUTPUT"
+          - run: gh pr comment 1 --body "${{ steps.parse.outputs.reason }}"
+    """
+    assert _severity(tmp_path, jobs, "AIA010") == "critical"
+
+
+def test_unrelated_step_output_is_not_model_text(tmp_path: Path) -> None:
+    jobs = """
+    jobs:
+      ai:
+        runs-on: ubuntu-latest
+        steps:
+          - id: analyze
+            uses: anthropics/claude-code-action@v1.0.100
+            with:
+              prompt: "Analyze"
+          - id: meta
+            run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          - run: echo "${{ steps.meta.outputs.sha }}"
+    """
+    assert "AIA010" not in _rule_ids(tmp_path, jobs)
+
+
+def test_fixed_label_gate_is_a_guard(tmp_path: Path) -> None:
+    header = "on:\n  issues:\n    types: [labeled]\npermissions: write-all\n"
+    jobs = """
+    jobs:
+      ai:
+        if: github.event.label.name == 'agent:pr'
+        runs-on: ubuntu-latest
+        steps:
+          - uses: anthropics/claude-code-action@v1.0.100
+            with:
+              prompt: "Fix ${{ github.event.issue.body }}"
+    """
+    findings = {f.rule_id: f.severity.value for f in _findings(tmp_path, jobs, header)}
+    assert findings["AIA001"] == "medium"
+    assert "AIA005" not in findings
+    assert "AIA006" not in findings
+
+
+def test_any_label_trigger_without_gate_is_not_a_guard(tmp_path: Path) -> None:
+    header = "on:\n  issues:\n    types: [opened, labeled]\npermissions: write-all\n"
+    jobs = """
+    jobs:
+      ai:
+        runs-on: ubuntu-latest
+        steps:
+          - uses: anthropics/claude-code-action@v1.0.100
+            with:
+              prompt: "Fix ${{ github.event.issue.body }}"
+    """
+    assert _severity(tmp_path, jobs, "AIA001", header) == "critical"
+
+
+def _pr_target_job(checkout: str, extra: str = "") -> str:
+    return f"""
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: {checkout}
+        with:
+          ref: ${{{{ github.event.pull_request.head.sha }}}}{extra}
+      - uses: anthropics/claude-code-action@v1.0.100
+        with:
+          prompt: "Review"
+"""
+
+
+PR_TARGET_HEADER = "on: [pull_request_target]\npermissions:\n  contents: read\n"
+
+
+def test_floating_checkout_that_refuses_forks_is_high(tmp_path: Path) -> None:
+    jobs = _pr_target_job("actions/checkout@v4")
+    assert _severity(tmp_path, jobs, "AIA008", PR_TARGET_HEADER) == "high"
+
+
+def test_unsafe_checkout_opt_in_is_critical(tmp_path: Path) -> None:
+    jobs = _pr_target_job("actions/checkout@v4", "\n          allow-unsafe-pr-checkout: true")
+    assert _severity(tmp_path, jobs, "AIA008", PR_TARGET_HEADER) == "critical"
+
+
+def test_sha_pinned_checkout_stays_critical(tmp_path: Path) -> None:
+    jobs = _pr_target_job("actions/checkout@" + "a" * 40)
+    assert _severity(tmp_path, jobs, "AIA008", PR_TARGET_HEADER) == "critical"
+
+
+AGENT_STEP = """
+      - id: ai
+        uses: actions/ai-inference@v1
+        with:
+          prompt: "Answer"
+"""
+
+
+def _steps(body: str) -> str:
+    return "jobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:" + AGENT_STEP + body
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "      - uses: actions/github-script@v7\n        with:\n          script: ${{ steps.ai.outputs.response }}\n",
+        '      - run: echo "${{ fromJSON(steps.ai.outputs.response).reason }}"\n',
+        '      - env:\n          R: ${{ steps.ai.outputs.response }}\n'
+        '        run: echo "REASON=$R" >> "$GITHUB_ENV"\n      - run: eval "$REASON"\n',
+        '      - env:\n          R: ${{ steps.ai.outputs.response }}\n'
+        '        run: echo "$R" > answer.txt\n      - run: bash answer.txt\n',
+        '      - env:\n          R: ${{ steps.ai.outputs.response }}\n        run: echo "$R" | sh\n',
+    ],
+)
+def test_model_text_reaching_execution_is_critical(tmp_path: Path, body: str) -> None:
+    assert _severity(tmp_path, _steps(body), "AIA010") == "critical"
+
+
+def test_model_text_crossing_jobs_is_tracked(tmp_path: Path) -> None:
+    jobs = (
+        "jobs:\n  first:\n    runs-on: ubuntu-latest\n    outputs:\n"
+        "      answer: ${{ steps.ai.outputs.response }}\n    steps:" + AGENT_STEP +
+        "  second:\n    needs: first\n    runs-on: ubuntu-latest\n    steps:\n"
+        '      - run: echo "${{ needs.first.outputs.answer }}"\n'
+    )
+    assert _severity(tmp_path, jobs, "AIA010") == "critical"
+
+
+def test_model_text_saved_as_data_is_not_flagged(tmp_path: Path) -> None:
+    body = (
+        "      - env:\n          R: ${{ steps.ai.outputs.response }}\n"
+        "        run: printf '%s' \"$R\" > answer.txt\n      - run: wc -c answer.txt\n"
+    )
+    assert "AIA010" not in _rule_ids(tmp_path, _steps(body))
+
+
+@pytest.mark.parametrize(
+    "with_ref",
+    ["refs/pull/${{ github.event.pull_request.number }}/merge", "${{ github.event.pull_request.merge_commit_sha }}"],
+)
+def test_other_pr_checkout_refs_are_detected(tmp_path: Path, with_ref: str) -> None:
+    jobs = f"""
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: {with_ref}
+      - uses: anthropics/claude-code-action@v1.0.100
+        with:
+          prompt: "Review"
+"""
+    assert "AIA008" in _rule_ids(tmp_path, jobs, PR_TARGET_HEADER)
+
+
+@pytest.mark.parametrize("command", ["gh pr checkout 12", "git fetch origin pull/12/head"])
+def test_pr_checkout_commands_stay_critical(tmp_path: Path, command: str) -> None:
+    jobs = f"""
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: {command}
+      - uses: anthropics/claude-code-action@v1.0.100
+        with:
+          prompt: "Review"
+"""
+    assert _severity(tmp_path, jobs, "AIA008", PR_TARGET_HEADER) == "critical"
+
+
+def test_base_branch_checkout_is_not_flagged(tmp_path: Path) -> None:
+    jobs = """
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: anthropics/claude-code-action@v1.0.100
+        with:
+          prompt: "Review"
+"""
+    assert "AIA008" not in _rule_ids(tmp_path, jobs, PR_TARGET_HEADER)
+
+
+def test_gh_output_is_not_model_text(tmp_path: Path) -> None:
+    body = (
+        "      - id: pr\n        run: |\n"
+        '          pr=$(gh api "repos/x/y/pulls" --jq ".[0]")\n'
+        '          echo "base_sha=$(jq -r .base.sha <<<"$pr")" >> "$GITHUB_OUTPUT"\n'
+        "      - uses: actions/checkout@v4\n        with:\n          ref: ${{ steps.pr.outputs.base_sha }}\n"
+    )
+    assert "AIA010" not in _rule_ids(tmp_path, _steps(body))
+
+
+def test_event_data_is_not_model_text(tmp_path: Path) -> None:
+    body = '      - run: echo "${{ github.event.issue.title }}"\n'
+    assert "AIA010" not in _rule_ids(tmp_path, _steps(body))
+
+
+def test_output_heredoc_is_not_mistaken_for_a_file(tmp_path: Path) -> None:
+    jobs = """
+    jobs:
+      ai:
+        runs-on: ubuntu-latest
+        steps:
+          - id: issue
+            run: |
+              gh issue view 1 --json title,body > /tmp/issue.json
+              echo "details<<EOF" >> $GITHUB_OUTPUT
+              cat /tmp/issue.json >> $GITHUB_OUTPUT
+              echo "EOF" >> $GITHUB_OUTPUT
+          - uses: anthropics/claude-code-action@v1.0.100
+            with:
+              prompt: "Triage ${{ steps.issue.outputs.details }}"
+    """
+    assert "AIA001" in _rule_ids(tmp_path, jobs)
+
+
+def test_isolated_pinned_checkout_is_high(tmp_path: Path) -> None:
+    extra = "\n          path: review-target\n          persist-credentials: false"
+    jobs = _pr_target_job("actions/checkout@" + "a" * 40, extra)
+    assert _severity(tmp_path, jobs, "AIA008", PR_TARGET_HEADER) == "high"
+
+
 def test_indirect_rule_covers_workflow_run(tmp_path: Path) -> None:
     header = "on:\n  workflow_run:\n    workflows: [CI]\npermissions:\n  contents: read\n"
     jobs = _action_job('prompt: "Fix CI"', 'claude_args: "--allowedTools Bash(gh:*)"')

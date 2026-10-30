@@ -253,16 +253,14 @@ ACTOR_GUARD_RE = re.compile(
     r"author_association|"
     r"github\.(?:actor|triggering_actor)\s*==|==\s*github\.(?:actor|triggering_actor)\b|"
     r"(?<!!)contains\(\s*fromjson\(.*?\)\s*,\s*github\.(?:actor|triggering_actor)\s*\)|"
-    r"head\.repo\.full_name\s*==\s*github\.repository",
+    r"head\.repo\.full_name\s*==\s*github\.repository|"
+    r"github\.event\.label\.name\s*==",  # Applying a label needs triage access
     re.IGNORECASE,
 )
 
-AGENT_OUTPUT_RE = re.compile(r"\bsteps\.([\w-]+)\.outputs\.([\w-]+)", re.IGNORECASE)
-
-# Outputs agent actions report about the run itself, which are not model text
-AGENT_METADATA_OUTPUTS = {"execution_file", "conclusion", "session_id", "branch_name", "github_token", "structured_output"}
-
-EVAL_LINE_RE = re.compile(r"\beval\b|\b(?:ba)?sh\s+-c\b|\bpython3?\s+-c\b|\bnode\s+-e\b")
+EVAL_LINE_RE = re.compile(r"\beval\b|\b(?:ba)?sh\s+-c\b|\bpython3?\s+-c\b|\bnode\s+-e\b|\|\s*(?:ba)?sh\b")
+FILE_EXEC_RE = r"(?:\b(?:ba)?sh|\bsource|\bpython3?|\bnode|(?:^|[;&|])\s*\.)\s+\S*"
+PR_CHECKOUT_COMMAND_RE = re.compile(r"\bgh\s+pr\s+checkout\b|\bgit\s+fetch\b[^\n]*\bpull/")
 GIT_TARGET_LINE_RE = re.compile(r"\bgit\s+(?:checkout|switch|branch|push|reset|clone)\b")
 DEFAULT_BRANCH_PUSH_RE = re.compile(
     r"\bgit\s+push\b(?![^\n]*--dry-run)[^\n;&|]*?\s(?:HEAD:)?(?:refs/heads/)?(?:main|master)(?=\s|$|[;&|])",
@@ -301,7 +299,7 @@ def _iter_unpinned_mcp_packages(text: str) -> list[str]:
     return unpinned
 
 PR_HEAD_CHECKOUT_RE = re.compile(
-    r"github\.event\.pull_request\.head\.(?:sha|ref)",
+    r"github\.event\.pull_request\.(?:head\.(?:sha|ref)|merge_commit_sha)|github\.head_ref|refs/pull/",
     re.IGNORECASE,
 )
 
@@ -403,38 +401,37 @@ def _is_read_only_token(perms: Any) -> bool:
     return False
 
 
-def _agent_refs(text: str, agent_ids: set[str]) -> bool:
-    """Return True if `text` references a model-text output of an agent step."""
-    return any(
-        step_id.lower() in agent_ids and output.lower() not in AGENT_METADATA_OUTPUTS
-        for step_id, output in AGENT_OUTPUT_RE.findall(text)
-    )
-
-
 def _agent_output_sinks(
     run: str,
     uses: str,
     with_block: Mapping[str, Any],
     step_env: Mapping[str, Any] | None,
-    agent_ids: set[str],
+    model_state: TaintState,
 ) -> list[tuple[Severity, str]]:
-    """Return (severity, description) for each place a step executes or trusts agent output."""
+    """Return (severity, description) for each place a step executes or trusts model text."""
     sinks: list[tuple[Severity, str]] = []
-    if any(_agent_refs(expr, agent_ids) for expr in GHA_EXPRESSION_RE.findall(run)):
+    model_env = model_state.scoped(step_env)
+    if any(model_state.sources(expr, model_env) for expr in GHA_EXPRESSION_RE.findall(run)):
         sinks.append((Severity.CRITICAL, "is interpolated into a `run:` block"))
 
-    for name, value in (step_env or {}).items():
-        if not _agent_refs(str(value or ""), agent_ids):
-            continue
-        lines = [line for line in run.splitlines() if references_env_var(line, str(name))]
+    for name in model_env:
+        lines = [line for line in run.splitlines() if references_env_var(line, name)]
         if any(EVAL_LINE_RE.search(line) for line in lines):
             sinks.append((Severity.CRITICAL, f"is executed through `env.{name}`"))
         elif any(GIT_TARGET_LINE_RE.search(line) for line in lines):
             sinks.append((Severity.HIGH, f"chooses a git target through `env.{name}`"))
 
+    for name in model_state.files:
+        if re.search(FILE_EXEC_RE + re.escape(name) + r"(?![\w-])", run, re.MULTILINE):
+            sinks.append((Severity.CRITICAL, f"is executed from the file `{name}`"))
+
+    if "actions/github-script" in uses.lower():
+        if model_state.sources(str(with_block.get("script") or ""), model_env):
+            sinks.append((Severity.CRITICAL, "is interpolated into `actions/github-script` code"))
+
     if "actions/checkout" in uses.lower():
         for key in ("ref", "repository", "path"):
-            if _agent_refs(str(with_block.get(key) or ""), agent_ids):
+            if model_state.sources(str(with_block.get(key) or ""), model_env):
                 sinks.append((Severity.HIGH, f"chooses the `{key}` of actions/checkout"))
     return sinks
 
@@ -446,12 +443,23 @@ def _has_cleared_token(step_env: Mapping[str, Any] | None) -> bool:
     return any(key in step_env and not str(step_env[key] or "").strip() for key in ("GITHUB_TOKEN", "GH_TOKEN"))
 
 
+def _is_agent_step(step: LineDict, signatures: list[ActionSignature]) -> bool:
+    uses = str(step.get("uses") or "")
+    if uses and _match_action_signature(uses, signatures)[0] is not None:
+        return True
+    return bool(step.get("run")) and bool(_match_cli_signatures(str(step["run"]), signatures))
+
+
 def _collect_job_output_taint(
     jobs: Mapping[str, Any],
     workflow_env: Mapping[str, Any] | None,
     subject_fields_empty: bool,
+    signatures: list[ActionSignature] | None = None,
 ) -> dict[str, list[str]]:
-    """Map tainted `needs.<job>.outputs.<name>` references, following chains between jobs."""
+    """Map tainted `needs.<job>.outputs.<name>` references, following chains between jobs.
+
+    With `signatures`, the taint source is model text from agent steps instead of event data.
+    """
     tainted: dict[str, list[str]] = {}
     # Each pass can only extend a chain by one job, regardless of file order
     for _ in range(len(jobs)):
@@ -460,15 +468,19 @@ def _collect_job_output_taint(
             if not isinstance(job_data, LineDict):
                 continue
             job_env = job_data.get("env") if isinstance(job_data.get("env"), Mapping) else None
+            model_only = signatures is not None
             state = TaintState(
-                env=collect_tainted_env_map(workflow_env, job_env, tainted_refs=tainted),
+                env={} if model_only else collect_tainted_env_map(workflow_env, job_env, tainted_refs=tainted),
                 refs=dict(tainted),
                 subject_fields_empty=subject_fields_empty,
+                agent_only=model_only,
             )
             steps = job_data.get("steps")
             for step in steps if isinstance(steps, list) else []:
                 if isinstance(step, LineDict):
                     _absorb_step(state, step)
+                    if signatures is not None and step.get("id") and _is_agent_step(step, signatures):
+                        state.agent_steps.add(str(step["id"]).lower())
             outputs = job_data.get("outputs")
             for name, value in outputs.items() if isinstance(outputs, Mapping) else []:
                 sources = state.sources(str(value), state.env)
@@ -515,6 +527,7 @@ def scan_workflow_file(
                     job_data=job_data,
                     signatures=signatures,
                     job_output_taint=job_output_taint,
+                    job_model_output=_collect_job_output_taint(jobs, workflow_env, False, signatures),
                 )
             )
     else:
@@ -542,6 +555,7 @@ def _scan_github_job(
     job_data: LineDict,
     signatures: list[ActionSignature],
     job_output_taint: Mapping[str, list[str]],
+    job_model_output: Mapping[str, list[str]],
 ) -> list[Finding]:
     findings: list[Finding] = []
     job_env = job_data.get("env") if isinstance(job_data.get("env"), Mapping) else None
@@ -561,7 +575,7 @@ def _scan_github_job(
     has_ai_step = False
     agent_holds_token = False
     agent_unsandboxed = False
-    agent_ids: set[str] = set()
+    model_state = TaintState(refs=dict(job_model_output), agent_only=True)
     job_fully_guarded = _guard_strength(job_if) == "full"
     output_risk = bool(triggers & OUTPUT_RISK_TRIGGERS) or not triggers
     first_ai_step_line = job_data.__line__
@@ -569,6 +583,7 @@ def _scan_github_job(
     has_egress_firewall = "firewall" in runs_on.lower()
     has_untrusted_pr_checkout = False
     untrusted_checkout_line = job_data.__line__
+    unsafe_pr_checkout = False
 
     # Check job-level `if:` for spoofable [bot] condition (AIA003)
     if SPOOFABLE_BOT_RE.search(job_if):
@@ -611,6 +626,12 @@ def _scan_github_job(
             if PR_HEAD_CHECKOUT_RE.search(ref_val):
                 has_untrusted_pr_checkout = True
                 untrusted_checkout_line = with_block.get_key_line("ref", step.__line__)
+                # Current checkout releases refuse fork PR code here, unless told otherwise
+                opted_in = str(with_block.get("allow-unsafe-pr-checkout") or "").strip().lower() == "true"
+                pinned = re.search(r"@[0-9a-f]{40}\b", uses_val.lower())
+                # Credentials kept out of a side folder is the documented way to inspect PR code
+                isolated = with_block.get("path") and str(with_block.get("persist-credentials")).lower() == "false"
+                unsafe_pr_checkout = unsafe_pr_checkout or opted_in or (bool(pinned) and not isolated)
 
         # Check step-level `if:` for spoofable [bot] check (AIA003)
         if SPOOFABLE_BOT_RE.search(step_if):
@@ -643,8 +664,8 @@ def _scan_github_job(
         taint_severity = Severity.MEDIUM if guard == "full" else (Severity.HIGH if limited_impact else None)
 
         # AIA010: Agent output reaching a shell, git command, or checkout target
-        if output_risk and agent_ids:
-            for sink_severity, sink in _agent_output_sinks(run_val, uses_val, with_block, step_env, agent_ids):
+        if output_risk:
+            for sink_severity, sink in _agent_output_sinks(run_val, uses_val, with_block, step_env, model_state):
                 sink_key = "run" if run_val else "uses"
                 sink_line = step.get_key_line(sink_key, step.__line__)
                 findings.append(
@@ -662,6 +683,12 @@ def _scan_github_job(
                     )
                 )
 
+        # A PR checkout through `gh` or `git` runs regardless of actions/checkout's refusal
+        if run_val and "pull_request_target" in triggers and PR_CHECKOUT_COMMAND_RE.search(run_val):
+            has_untrusted_pr_checkout = True
+            unsafe_pr_checkout = True
+            untrusted_checkout_line = step.get_key_line("run", step.__line__)
+
         # Check `uses:` against AI Action signatures
         if uses_val:
             sig, version_ref = _match_action_signature(uses_val, signatures)
@@ -673,7 +700,7 @@ def _scan_github_job(
                 agent_holds_token = agent_holds_token or not _has_cleared_token(step_env)
                 read_only_sandbox = str(with_block.get("sandbox") or "").strip().lower() == "read-only"
                 agent_unsandboxed = agent_unsandboxed or not read_only_sandbox
-                agent_ids.update({str(step["id"]).lower()} if step.get("id") else set())
+                model_state.agent_steps.update({str(step["id"]).lower()} if step.get("id") else set())
                 if read_only_sandbox and taint_severity is None:
                     taint_severity = Severity.HIGH
 
@@ -767,7 +794,7 @@ def _scan_github_job(
                     first_ai_tool_id = cli_sigs[0].id
                 agent_holds_token = agent_holds_token or not _has_cleared_token(step_env)
                 agent_unsandboxed = True
-                agent_ids.update({str(step["id"]).lower()} if step.get("id") else set())
+                model_state.agent_steps.update({str(step["id"]).lower()} if step.get("id") else set())
 
                 for cli_sig in cli_sigs:
                     # AIA001: Tainted input in CLI command
@@ -871,6 +898,7 @@ def _scan_github_job(
                 )
 
         _absorb_step(taint_state, step)
+        _absorb_step(model_state, step)
 
     # Job-level checks that apply only if the job runs at least one AI agent step
     if has_ai_step:
@@ -933,7 +961,14 @@ def _scan_github_job(
                         f"Job '{job_id}' is triggered by `pull_request_target`, checks out untrusted "
                         "PR head code, and runs an AI coding agent—allowing malicious repo files/hooks "
                         "to execute with base repository secrets."
+                        + (
+                            " Current actions/checkout releases refuse fork PR code here, so same-repository "
+                            "PRs and older pinned versions are the remaining risk."
+                            if not unsafe_pr_checkout
+                            else ""
+                        )
                     ),
+                    severity=Severity.HIGH if not unsafe_pr_checkout else None,
                 )
             )
 
