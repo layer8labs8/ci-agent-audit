@@ -1,0 +1,20 @@
+# Hardened sample for the action self-test: must produce zero findings.
+name: Hardened AI review
+on:
+  pull_request:
+    types: [opened]
+
+permissions:
+  contents: read
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: step-security/harden-runner@v2
+        with:
+          egress-policy: block
+      - uses: actions/checkout@v4
+      - uses: anthropics/claude-code-action@v1.0.94
+        with:
+          prompt: "Review the git diff for security bugs."

@@ -1,0 +1,18 @@
+# Deliberately insecure sample for the action self-test. Lives outside .github/workflows, so it never runs.
+name: Vulnerable AI triage
+on:
+  issues:
+    types: [opened]
+
+permissions: write-all
+
+jobs:
+  triage:
+    if: endsWith(github.actor, '[bot]')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: anthropics/claude-code-action@v1.0.80
+        with:
+          prompt: "Triage this issue: ${{ github.event.issue.body }}"
+          allowed_non_write_users: "*"
+          claude_args: "--dangerously-skip-permissions"

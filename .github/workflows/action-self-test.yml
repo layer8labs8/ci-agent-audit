@@ -1,0 +1,69 @@
+name: Action self-test
+
+on:
+  push:
+    branches: ["main", "test/**"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  detects-vulnerable-workflow:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - id: audit
+        uses: ./
+        continue-on-error: true
+        with:
+          paths: tests/fixtures/workflows/vulnerable.yml
+          fail-on: high
+          sarif-output: results.sarif
+      - name: Action must fail and write a valid SARIF report
+        env:
+          OUTCOME: ${{ steps.audit.outcome }}
+        run: |
+          test "$OUTCOME" = "failure"
+          python - <<'PY'
+          import json
+
+          report = json.load(open("results.sarif", encoding="utf-8"))
+          rules = {result["ruleId"] for result in report["runs"][0]["results"]}
+          missing = {"AIA001", "AIA002", "AIA003", "AIA004", "AIA005", "AIA006"} - rules
+          assert report["version"] == "2.1.0"
+          assert not missing, f"Missing rules: {missing}"
+          PY
+
+  passes-hardened-workflow:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: ./
+        with:
+          paths: tests/fixtures/workflows/safe.yml
+          fail-on: low
+
+  ignores-shell-in-inputs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: ./
+        with:
+          paths: "tests/fixtures/workflows/safe.yml ; touch pwned-paths $(touch pwned-subshell)"
+          fail-on: low
+          sarif-output: "out$(touch pwned-sarif).sarif"
+      - name: Inputs must not run as shell commands
+        run: |
+          test ! -e pwned-paths
+          test ! -e pwned-subshell
+          test ! -e pwned-sarif
+
+  emits-annotations:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: ./
+        with:
+          paths: tests/fixtures/workflows/vulnerable.yml
+          fail-on: none
