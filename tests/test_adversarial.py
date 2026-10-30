@@ -461,6 +461,264 @@ jobs:
     assert severities == {"high"}
 
 
+def _severity(tmp_path: Path, jobs: str, rule_id: str, header: str = ISSUES_HEADER) -> str:
+    return {f.rule_id: f.severity.value for f in _findings(tmp_path, jobs, header)}[rule_id]
+
+
+def test_model_output_in_run_block_is_critical(tmp_path: Path) -> None:
+    jobs = """
+    jobs:
+      ai:
+        runs-on: ubuntu-latest
+        steps:
+          - id: ai
+            uses: actions/ai-inference@v1
+            with:
+              prompt: "Label this"
+          - run: echo "${{ steps.ai.outputs.response }}"
+    """
+    assert _severity(tmp_path, jobs, "AIA010") == "critical"
+
+
+def test_model_output_passed_as_data_is_not_flagged(tmp_path: Path) -> None:
+    jobs = """
+    jobs:
+      ai:
+        runs-on: ubuntu-latest
+        steps:
+          - id: ai
+            uses: actions/ai-inference@v1
+            with:
+              prompt: "Label this"
+          - env:
+              ANSWER: ${{ steps.ai.outputs.response }}
+            run: printf '%s' "$ANSWER" > answer.txt
+    """
+    assert "AIA010" not in _rule_ids(tmp_path, jobs)
+
+
+def test_model_chosen_checkout_ref_is_high(tmp_path: Path) -> None:
+    jobs = """
+    jobs:
+      ai:
+        runs-on: ubuntu-latest
+        steps:
+          - id: ai
+            uses: actions/ai-inference@v1
+            with:
+              prompt: "Which branch?"
+          - uses: actions/checkout@v4
+            with:
+              ref: ${{ steps.ai.outputs.response }}
+    """
+    assert _severity(tmp_path, jobs, "AIA010") == "high"
+
+
+def test_model_output_env_used_by_git_is_high(tmp_path: Path) -> None:
+    jobs = """
+    jobs:
+      ai:
+        runs-on: ubuntu-latest
+        steps:
+          - id: ai
+            uses: actions/ai-inference@v1
+            with:
+              prompt: "Which branch?"
+          - env:
+              TARGET: ${{ steps.ai.outputs.response }}
+            run: git checkout -b "$TARGET"
+    """
+    assert _severity(tmp_path, jobs, "AIA010") == "high"
+
+
+def test_model_output_env_in_eval_is_critical(tmp_path: Path) -> None:
+    jobs = """
+    jobs:
+      ai:
+        runs-on: ubuntu-latest
+        steps:
+          - id: ai
+            uses: actions/ai-inference@v1
+            with:
+              prompt: "Which command?"
+          - env:
+              CMD: ${{ steps.ai.outputs.response }}
+            run: eval "$CMD"
+    """
+    assert _severity(tmp_path, jobs, "AIA010") == "critical"
+
+
+def test_agent_metadata_outputs_are_not_model_text(tmp_path: Path) -> None:
+    jobs = """
+    jobs:
+      ai:
+        runs-on: ubuntu-latest
+        steps:
+          - id: claude
+            uses: anthropics/claude-code-action@v1.0.100
+            with:
+              prompt: "Review"
+          - run: cat "${{ steps.claude.outputs.execution_file }}"
+    """
+    assert "AIA010" not in _rule_ids(tmp_path, jobs)
+
+
+def test_model_output_rule_ignores_trusted_triggers(tmp_path: Path) -> None:
+    header = "on: [push]\npermissions:\n  contents: read\n"
+    jobs = """
+    jobs:
+      ai:
+        runs-on: ubuntu-latest
+        steps:
+          - id: ai
+            uses: actions/ai-inference@v1
+            with:
+              prompt: "Summarize"
+          - run: echo "${{ steps.ai.outputs.response }}"
+    """
+    assert "AIA010" not in _rule_ids(tmp_path, jobs, header)
+
+
+@pytest.mark.parametrize(
+    "command",
+    ["git push origin main", "git push origin HEAD:master", "git push origin HEAD:refs/heads/main"],
+)
+def test_agent_pushing_to_default_branch_is_flagged(tmp_path: Path, command: str) -> None:
+    jobs = f"""
+jobs:
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+      - run: claude -p "Update the changelog"
+      - run: |
+          git commit -am "docs: update"
+          {command}
+"""
+    assert "AIA011" in _rule_ids(tmp_path, jobs)
+
+
+@pytest.mark.parametrize("command", ["git push origin docs-bot/changelog", "git push origin main --dry-run"])
+def test_review_branch_push_is_not_flagged(tmp_path: Path, command: str) -> None:
+    jobs = f"""
+jobs:
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+      - run: claude -p "Update the changelog"
+      - run: {command}
+"""
+    assert "AIA011" not in _rule_ids(tmp_path, jobs)
+
+
+def test_push_before_agent_runs_is_not_flagged(tmp_path: Path) -> None:
+    jobs = """
+    jobs:
+      docs:
+        runs-on: ubuntu-latest
+        steps:
+          - run: git push origin main
+          - run: claude -p "Update the changelog"
+    """
+    assert "AIA011" not in _rule_ids(tmp_path, jobs)
+
+
+@pytest.mark.parametrize(
+    "guard",
+    [
+        "github.event.comment.author_association == 'OWNER'",
+        "github.actor == 'trusted-bot'",
+        "contains(fromJSON('[\"alice\", \"bob\"]'), github.actor)",
+        "github.event.pull_request.head.repo.full_name == github.repository",
+    ],
+)
+def test_complete_guard_lowers_taint_to_medium(tmp_path: Path, guard: str) -> None:
+    jobs = f"""
+jobs:
+  ai:
+    if: {guard}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: anthropics/claude-code-action@v1.0.100
+        with:
+          prompt: "Summarise ${{{{ github.event.issue.body }}}}"
+"""
+    findings = {f.rule_id: f.severity.value for f in _findings(tmp_path, jobs)}
+    assert findings["AIA001"] == "medium"
+    assert "AIA006" not in findings
+
+
+def test_step_guard_counts_too(tmp_path: Path) -> None:
+    jobs = """
+    jobs:
+      ai:
+        runs-on: ubuntu-latest
+        steps:
+          - if: github.actor == 'trusted-bot'
+            uses: anthropics/claude-code-action@v1.0.100
+            with:
+              prompt: "Summarise ${{ github.event.issue.body }}"
+    """
+    assert _severity(tmp_path, jobs, "AIA001") == "medium"
+
+
+def test_guard_covering_one_event_only_stays_high(tmp_path: Path) -> None:
+    jobs = """
+    jobs:
+      ai:
+        if: github.event_name == 'issues' || github.event.comment.author_association == 'OWNER'
+        runs-on: ubuntu-latest
+        steps:
+          - uses: anthropics/claude-code-action@v1.0.100
+            with:
+              prompt: "Summarise ${{ github.event.issue.body }}"
+    """
+    assert _severity(tmp_path, jobs, "AIA001") == "high"
+
+
+@pytest.mark.parametrize("guard", ["github.actor != 'dependabot[bot]'", "github.event.action == 'opened'"])
+def test_non_guards_do_not_lower_severity(tmp_path: Path, guard: str) -> None:
+    header = "on:\n  issues:\n    types: [opened]\npermissions: write-all\n"
+    jobs = f"""
+jobs:
+  ai:
+    if: {guard}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: anthropics/claude-code-action@v1.0.100
+        with:
+          prompt: "Summarise ${{{{ github.event.issue.body }}}}"
+"""
+    assert _severity(tmp_path, jobs, "AIA001", header) == "critical"
+
+
+def test_spoofable_bot_suffix_is_not_a_guard(tmp_path: Path) -> None:
+    header = "on:\n  issues:\n    types: [opened]\npermissions: write-all\n"
+    jobs = """
+    jobs:
+      ai:
+        if: endsWith(github.actor, '[bot]')
+        runs-on: ubuntu-latest
+        steps:
+          - uses: anthropics/claude-code-action@v1.0.100
+            with:
+              prompt: "Summarise ${{ github.event.issue.body }}"
+    """
+    assert _severity(tmp_path, jobs, "AIA001", header) == "critical"
+
+
+def test_read_only_token_lowers_cli_taint_to_high(tmp_path: Path) -> None:
+    jobs = """
+    jobs:
+      ai:
+        runs-on: ubuntu-latest
+        steps:
+          - env:
+              BODY: ${{ github.event.issue.body }}
+            run: claude -p "$BODY"
+    """
+    assert _severity(tmp_path, jobs, "AIA001") == "high"
+
+
 def test_indirect_rule_covers_workflow_run(tmp_path: Path) -> None:
     header = "on:\n  workflow_run:\n    workflows: [CI]\npermissions:\n  contents: read\n"
     jobs = _action_job('prompt: "Fix CI"', 'claude_args: "--allowedTools Bash(gh:*)"')

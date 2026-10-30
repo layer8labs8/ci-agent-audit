@@ -1,4 +1,4 @@
-"""Security audit rules (AIA001 - AIA009) and workflow scanner engine."""
+"""Security audit rules (AIA001 - AIA011) and workflow scanner engine."""
 
 from __future__ import annotations
 
@@ -8,7 +8,14 @@ from typing import Any, Mapping
 
 from ci_agent_audit.models import ActionSignature, Finding, RuleMetadata, Severity
 from ci_agent_audit.signatures_loader import load_signatures
-from ci_agent_audit.taint import GH_FETCH_RE, TaintState, collect_tainted_env_map, find_all_taint_sources
+from ci_agent_audit.taint import (
+    GH_FETCH_RE,
+    GHA_EXPRESSION_RE,
+    TaintState,
+    collect_tainted_env_map,
+    find_all_taint_sources,
+    references_env_var,
+)
 from ci_agent_audit.yaml_loader import LineDict, load_workflow_file
 
 RULES_CATALOG: dict[str, RuleMetadata] = {
@@ -175,6 +182,40 @@ RULES_CATALOG: dict[str, RuleMetadata] = {
             "https://www.aikido.dev/blog/promptpwnd-github-actions-ai-agents",
         ],
     ),
+    "AIA010": RuleMetadata(
+        rule_id="AIA010",
+        name="agent-output-to-execution",
+        severity=Severity.CRITICAL,
+        short_description="AI agent output reaches a shell, git command, or checkout target.",
+        full_description=(
+            "Model output is attacker-influenced whenever the model reads outside text. Interpolating it into "
+            "a `run:` block, passing it to `eval`, or letting it pick a git ref turns a prompt injection into "
+            "command execution or a checkout of attacker-chosen code."
+        ),
+        remediation=(
+            "Pass agent output through `env:` and treat it as data. Validate it against a fixed allowlist "
+            "before using it as a command, branch, ref, or path."
+        ),
+        references=[
+            "https://docs.github.com/en/actions/security-for-github-actions/security-guides/security-hardening-for-github-actions",
+        ],
+    ),
+    "AIA011": RuleMetadata(
+        rule_id="AIA011",
+        name="agent-pushes-default-branch",
+        severity=Severity.HIGH,
+        short_description="Job pushes to the default branch after an AI agent ran, with no human review.",
+        full_description=(
+            "When a job runs an agent and then pushes straight to `main` or `master`, a prompt injection lands "
+            "in the default branch without any pull request or review."
+        ),
+        remediation=(
+            "Push the agent's work to a separate branch and open a pull request, and protect the default branch."
+        ),
+        references=[
+            "https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches",
+        ],
+    ),
 }
 
 UNTRUSTED_TRIGGERS = {
@@ -203,6 +244,30 @@ CALLER_GATED_TRIGGERS = {"workflow_call", "workflow_dispatch"}
 GH_TOOL_GRANT_RE = re.compile(r"Bash\(gh[\s:*)]")
 
 # Ways a CLI is started besides its bare name: wrappers, env prefixes, and package runners
+# Triggers where model output can be steered by someone outside the project
+OUTPUT_RISK_TRIGGERS = UNTRUSTED_TRIGGERS | FETCH_RISK_TRIGGERS
+
+# Conditions that limit who can start a run. `!=` checks and `[bot]` suffixes are deliberately absent.
+ACTOR_GUARD_RE = re.compile(
+    r"author_association|"
+    r"github\.(?:actor|triggering_actor)\s*==|==\s*github\.(?:actor|triggering_actor)\b|"
+    r"(?<!!)contains\(\s*fromjson\(.*?\)\s*,\s*github\.(?:actor|triggering_actor)\s*\)|"
+    r"head\.repo\.full_name\s*==\s*github\.repository",
+    re.IGNORECASE,
+)
+
+AGENT_OUTPUT_RE = re.compile(r"\bsteps\.([\w-]+)\.outputs\.([\w-]+)", re.IGNORECASE)
+
+# Outputs agent actions report about the run itself, which are not model text
+AGENT_METADATA_OUTPUTS = {"execution_file", "conclusion", "session_id", "branch_name", "github_token", "structured_output"}
+
+EVAL_LINE_RE = re.compile(r"\beval\b|\b(?:ba)?sh\s+-c\b|\bpython3?\s+-c\b|\bnode\s+-e\b")
+GIT_TARGET_LINE_RE = re.compile(r"\bgit\s+(?:checkout|switch|branch|push|reset|clone)\b")
+DEFAULT_BRANCH_PUSH_RE = re.compile(
+    r"\bgit\s+push\b(?![^\n]*--dry-run)[^\n;&|]*?\s(?:HEAD:)?(?:refs/heads/)?(?:main|master)(?=\s|$|[;&|])",
+    re.MULTILINE,
+)
+
 CLI_PREFIX = (
     r"(?:^|[;&|(]\s*|\$\(\s*)[ \t]*"
     r"(?:(?:sudo|nohup|time|exec|command|xvfb-run|timeout\s+\S+|env|[A-Za-z_]\w*=\S*)\s+)*"
@@ -315,6 +380,62 @@ def _absorb_step(state: TaintState, step: LineDict) -> None:
         with_block = step.get("with")
         if isinstance(with_block, Mapping) and with_block.get("script"):
             state.absorb_github_script(step_id, str(with_block["script"]))
+
+
+def _guard_strength(*conditions: str) -> str | None:
+    """Return "full" for a guard on every path through an `if:`, "partial" if `||` may skip it."""
+    strength = None
+    for condition in conditions:
+        if ACTOR_GUARD_RE.search(condition):
+            if "||" not in condition:
+                return "full"
+            strength = "partial"
+    return strength
+
+
+def _is_read_only_token(perms: Any) -> bool:
+    """Return True if an explicit permissions block grants no write scope."""
+    if isinstance(perms, str):
+        return perms.strip().lower() == "read-all"
+    if isinstance(perms, Mapping):
+        return not any(str(value).strip().lower() == "write" for value in perms.values())
+    return False
+
+
+def _agent_refs(text: str, agent_ids: set[str]) -> bool:
+    """Return True if `text` references a model-text output of an agent step."""
+    return any(
+        step_id.lower() in agent_ids and output.lower() not in AGENT_METADATA_OUTPUTS
+        for step_id, output in AGENT_OUTPUT_RE.findall(text)
+    )
+
+
+def _agent_output_sinks(
+    run: str,
+    uses: str,
+    with_block: Mapping[str, Any],
+    step_env: Mapping[str, Any] | None,
+    agent_ids: set[str],
+) -> list[tuple[Severity, str]]:
+    """Return (severity, description) for each place a step executes or trusts agent output."""
+    sinks: list[tuple[Severity, str]] = []
+    if any(_agent_refs(expr, agent_ids) for expr in GHA_EXPRESSION_RE.findall(run)):
+        sinks.append((Severity.CRITICAL, "is interpolated into a `run:` block"))
+
+    for name, value in (step_env or {}).items():
+        if not _agent_refs(str(value or ""), agent_ids):
+            continue
+        lines = [line for line in run.splitlines() if references_env_var(line, str(name))]
+        if any(EVAL_LINE_RE.search(line) for line in lines):
+            sinks.append((Severity.CRITICAL, f"is executed through `env.{name}`"))
+        elif any(GIT_TARGET_LINE_RE.search(line) for line in lines):
+            sinks.append((Severity.HIGH, f"chooses a git target through `env.{name}`"))
+
+    if "actions/checkout" in uses.lower():
+        for key in ("ref", "repository", "path"):
+            if _agent_refs(str(with_block.get(key) or ""), agent_ids):
+                sinks.append((Severity.HIGH, f"chooses the `{key}` of actions/checkout"))
+    return sinks
 
 
 def _has_cleared_token(step_env: Mapping[str, Any] | None) -> bool:
@@ -439,6 +560,9 @@ def _scan_github_job(
     has_ai_step = False
     agent_holds_token = False
     agent_unsandboxed = False
+    agent_ids: set[str] = set()
+    job_fully_guarded = _guard_strength(job_if) == "full"
+    output_risk = bool(triggers & OUTPUT_RISK_TRIGGERS) or not triggers
     first_ai_step_line = job_data.__line__
     first_ai_tool_id: str | None = None
     has_egress_firewall = "firewall" in runs_on.lower()
@@ -507,7 +631,35 @@ def _scan_github_job(
             )
 
         tainted_env = taint_state.scoped(step_env)
-        fetch_guarded = "author_association" in f"{job_if} {step_if}"
+        guard = _guard_strength(job_if, step_if)
+        fetch_guarded = guard is not None
+        limited_impact = (
+            fetch_guarded
+            or _has_cleared_token(step_env)
+            or _is_read_only_token(job_perms)
+            or (triggers and triggers <= CALLER_GATED_TRIGGERS)
+        )
+        taint_severity = Severity.MEDIUM if guard == "full" else (Severity.HIGH if limited_impact else None)
+
+        # AIA010: Agent output reaching a shell, git command, or checkout target
+        if output_risk and agent_ids:
+            for sink_severity, sink in _agent_output_sinks(run_val, uses_val, with_block, step_env, agent_ids):
+                sink_key = "run" if run_val else "uses"
+                sink_line = step.get_key_line(sink_key, step.__line__)
+                findings.append(
+                    _make_finding(
+                        rule_id="AIA010",
+                        file_path=file_path,
+                        line=sink_line,
+                        col=step.get_key_col(sink_key),
+                        job_id=job_id,
+                        step_name=step_name,
+                        tool_id=first_ai_tool_id,
+                        snippet=_get_snippet(raw_lines, sink_line),
+                        message=f"AI agent output {sink} in step '{step_name}'.",
+                        severity=Severity.MEDIUM if guard == "full" else sink_severity,
+                    )
+                )
 
         # Check `uses:` against AI Action signatures
         if uses_val:
@@ -520,14 +672,9 @@ def _scan_github_job(
                 agent_holds_token = agent_holds_token or not _has_cleared_token(step_env)
                 read_only_sandbox = str(with_block.get("sandbox") or "").strip().lower() == "read-only"
                 agent_unsandboxed = agent_unsandboxed or not read_only_sandbox
-                taint_severity = (
-                    Severity.HIGH
-                    if read_only_sandbox
-                    or fetch_guarded
-                    or _has_cleared_token(step_env)
-                    or (triggers and triggers <= CALLER_GATED_TRIGGERS)
-                    else None
-                )
+                agent_ids.update({str(step["id"]).lower()} if step.get("id") else set())
+                if read_only_sandbox and taint_severity is None:
+                    taint_severity = Severity.HIGH
 
                 # AIA004: Check vulnerable or unpinned AI Action version
                 findings.extend(
@@ -619,6 +766,7 @@ def _scan_github_job(
                     first_ai_tool_id = cli_sigs[0].id
                 agent_holds_token = agent_holds_token or not _has_cleared_token(step_env)
                 agent_unsandboxed = True
+                agent_ids.update({str(step["id"]).lower()} if step.get("id") else set())
 
                 for cli_sig in cli_sigs:
                     # AIA001: Tainted input in CLI command
@@ -638,6 +786,7 @@ def _scan_github_job(
                                     f"Untrusted input ({', '.join(taint_sources)}) flows into "
                                     f"{cli_sig.name} CLI invocation in `run:` block (PromptPwnd risk)."
                                 ),
+                                severity=taint_severity,
                             )
                         )
 
@@ -685,6 +834,22 @@ def _scan_github_job(
                                 )
                             )
 
+            # AIA011: Job pushes to the default branch after an agent ran
+            if has_ai_step and output_risk and not job_fully_guarded and DEFAULT_BRANCH_PUSH_RE.search(run_val):
+                findings.append(
+                    _make_finding(
+                        rule_id="AIA011",
+                        file_path=file_path,
+                        line=run_line,
+                        col=step.get_key_col("run"),
+                        job_id=job_id,
+                        step_name=step_name,
+                        tool_id=first_ai_tool_id,
+                        snippet=_get_snippet(raw_lines, run_line),
+                        message=f"Job '{job_id}' pushes to the default branch after an AI agent ran, with no review.",
+                    )
+                )
+
             # AIA007: Unpinned MCP server in `run:`
             for pkg_name in _iter_unpinned_mcp_packages(run_val):
                 findings.append(
@@ -711,7 +876,7 @@ def _scan_github_job(
         externally_reachable = bool(triggers & UNTRUSTED_TRIGGERS) or not triggers
 
         # AIA005: Over-privileged or missing permissions block on untrusted triggers
-        if externally_reachable and agent_holds_token:
+        if externally_reachable and agent_holds_token and not job_fully_guarded:
             if _is_overprivileged_permissions(job_perms):
                 perm_line = job_data.get_key_line("permissions", job_data.__line__)
                 findings.append(
@@ -733,7 +898,7 @@ def _scan_github_job(
 
         # AIA006: Missing egress firewall
         privileged_reach = bool(triggers & PRIVILEGED_UNTRUSTED_TRIGGERS) or not triggers
-        if privileged_reach and agent_unsandboxed and not has_egress_firewall:
+        if privileged_reach and agent_unsandboxed and not has_egress_firewall and not job_fully_guarded:
             findings.append(
                 _make_finding(
                     rule_id="AIA006",

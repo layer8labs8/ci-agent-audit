@@ -83,11 +83,11 @@ repos:
 
 ---
 
-## Built-in Security Rules (`AIA001` – `AIA009`)
+## Built-in Security Rules (`AIA001` – `AIA011`)
 
 | Rule ID | Severity | Name | What It Catches |
 | :--- | :--- | :--- | :--- |
-| **`AIA001`** | Critical | `promptpwnd-untrusted-input` | Untrusted GitHub/GitLab event fields (`issue.body`, `comment.body`, `toJSON(github.event)`, etc.) flowing directly or via `env:`, `$GITHUB_ENV`, step or job outputs, `actions/github-script` outputs, or files named in the prompt into AI prompt sinks, agent step `env:`, or CLI calls. Reported as High when a read-only sandbox, a cleared token, an `author_association` check, or a reusable-workflow trigger may limit the impact. |
+| **`AIA001`** | Critical | `promptpwnd-untrusted-input` | Untrusted GitHub/GitLab event fields (`issue.body`, `comment.body`, `toJSON(github.event)`, etc.) flowing directly or via `env:`, `$GITHUB_ENV`, step or job outputs, `actions/github-script` outputs, or files named in the prompt into AI prompt sinks, agent step `env:`, or CLI calls. Reported as High when a read-only sandbox, read-only token, cleared token, or reusable-workflow trigger may limit the impact, and as Medium behind a complete actor guard. |
 | **`AIA002`** | High | `dangerous-agent-permissions` | Dangerous auto-execution / permission-bypass flags (`--dangerously-skip-permissions`, `--permission-mode bypassPermissions`, `--yolo`, `--full-auto`, `Bash(*)`) in CI. |
 | **`AIA003`** | Critical | `spoofable-bot-actor-check` | Spoofable `endsWith(github.actor, '[bot]')` conditions. Wildcard access (`allowed_non_write_users: "*"`, `allowed_bots: "*"`, `allow-users: "*"`) is High, or Medium in a read-only sandbox. |
 | **`AIA004`** | High | `vulnerable-ai-action-version` | AI Actions pinned to mutable branches (`@main`), floating tags (`@v1`, reported as Medium), or vulnerable releases (e.g., `anthropics/claude-code-action < v1.0.94`). |
@@ -95,7 +95,9 @@ repos:
 | **`AIA006`** | Medium | `missing-egress-firewall` | AI agent on a privileged public trigger without outbound network blocking (`step-security/harden-runner` with `egress-policy: block`, a firewall runner, or a read-only sandbox). Fork `pull_request` runs are excluded because they receive no secrets. |
 | **`AIA007`** | High | `unpinned-mcp-server-in-ci` | Dynamic execution of unpinned MCP servers (`npx -y @scope/mcp-server` or `uvx`) inside CI pipelines. |
 | **`AIA008`** | Critical | `ai-pull-request-target-checkout` | `pull_request_target` workflow checking out untrusted PR head code and executing an AI coding agent with base repository secrets. |
-| **`AIA009`** | High | `agent-fetches-untrusted-context` | Agent told or allowed to read issue/PR text through `gh` on a privileged public or scheduled trigger, with no `author_association` gate. |
+| **`AIA009`** | High | `agent-fetches-untrusted-context` | Agent told or allowed to read issue/PR text through `gh` on a privileged public or scheduled trigger, with no actor guard. |
+| **`AIA010`** | Critical | `agent-output-to-execution` | Model output interpolated into `run:` or passed to `eval`, or (High) choosing a git target or `actions/checkout` ref, on an externally reachable trigger. |
+| **`AIA011`** | High | `agent-pushes-default-branch` | Job pushes to `main` or `master` after an AI agent ran, with no pull request. |
 
 ## Known Limitations
 
@@ -106,6 +108,7 @@ Static analysis finds risky patterns, not proven exploits. A clean report does n
 - A read-only sandbox is taken from the action's `sandbox:` input as written. Its behavior is not verified.
 - Agents that read issue text through their own built-in tools, with no `gh` mention in the workflow, are not detected.
 - Reusable workflows and composite actions are not followed into their own files.
+- Actor guards are read from `if:` text. An `if:` containing `||` counts as a partial guard, because a static scan cannot tell which paths it covers.
 - `--fix` replaces `permissions: write-all` with `contents: read`. Add back any scope your agent genuinely needs.
 
 ---

@@ -105,7 +105,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
 
     # `rules` command
-    subparsers.add_parser("rules", help="List all built-in security audit rules (AIA001 - AIA009)")
+    subparsers.add_parser("rules", help="List all built-in security audit rules (AIA001 - AIA011)")
 
     # `explain` command
     explain_p = subparsers.add_parser("explain", help="Show detailed documentation and remediation for a rule")

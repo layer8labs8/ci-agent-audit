@@ -117,7 +117,7 @@ def collect_tainted_env_map(
                 # Check if this env var references an already-tainted env var
                 inherited: list[str] = []
                 for prev_key, prev_sources in tainted.items():
-                    if prev_key != str(key) and _references_env_var(val_str, prev_key):
+                    if prev_key != str(key) and references_env_var(val_str, prev_key):
                         for src in prev_sources:
                             if src not in inherited:
                                 inherited.append(src)
@@ -142,7 +142,7 @@ def _ref_sources(value: str, tainted_refs: Mapping[str, list[str]] | None) -> li
     return sources
 
 
-def _references_env_var(text: str, env_name: str) -> bool:
+def references_env_var(text: str, env_name: str) -> bool:
     """Return True if `text` references `env_name` via `$VAR`, `${VAR}`, or `${{ env.VAR }}`."""
     escaped = re.escape(env_name)
     patterns = (
@@ -166,7 +166,7 @@ def find_all_taint_sources(
     sources = find_direct_untrusted_sources(value)
     if tainted_env:
         for env_name, env_sources in tainted_env.items():
-            if _references_env_var(value, env_name):
+            if references_env_var(value, env_name):
                 for src in env_sources:
                     label = f"{src} (via env.{env_name})"
                     if label not in sources and src not in sources:
