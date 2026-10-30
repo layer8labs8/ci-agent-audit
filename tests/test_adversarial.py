@@ -974,6 +974,63 @@ def test_isolated_pinned_checkout_is_high(tmp_path: Path) -> None:
     assert _severity(tmp_path, jobs, "AIA008", PR_TARGET_HEADER) == "high"
 
 
+def test_excluding_bots_is_not_a_spoofable_check(tmp_path: Path) -> None:
+    jobs = """
+    jobs:
+      ai:
+        if: "!endsWith(github.actor, '[bot]')"
+        runs-on: ubuntu-latest
+        steps:
+          - uses: anthropics/claude-code-action@v1.0.100
+            with:
+              prompt: "Review"
+    """
+    assert "AIA003" not in _rule_ids(tmp_path, jobs)
+
+
+def test_guards_on_every_branch_are_complete(tmp_path: Path) -> None:
+    jobs = """
+    jobs:
+      ai:
+        if: github.event.label.name == 'bot' || github.event.label.name == 'bot:config'
+        runs-on: ubuntu-latest
+        steps:
+          - uses: anthropics/claude-code-action@v1.0.100
+            with:
+              prompt: "Fix ${{ github.event.issue.body }}"
+    """
+    assert _severity(tmp_path, jobs, "AIA001") == "medium"
+
+
+@pytest.mark.parametrize(
+    "args",
+    ['--allowedTools "Read,Grep"', '--disallowedTools "Bash,Edit"', '--allowed-tools "Read"'],
+)
+def test_agent_without_shell_lowers_taint_to_high(tmp_path: Path, args: str) -> None:
+    header = "on:\n  issues:\n    types: [opened]\npermissions: write-all\n"
+    jobs = _action_job('prompt: "Fix ${{ github.event.issue.body }}"', f"claude_args: '{args}'")
+    assert _severity(tmp_path, jobs, "AIA001", header) == "high"
+
+
+def test_agent_with_shell_tools_stays_critical(tmp_path: Path) -> None:
+    header = "on:\n  issues:\n    types: [opened]\npermissions: write-all\n"
+    jobs = _action_job('prompt: "Fix ${{ github.event.issue.body }}"', "claude_args: '--allowedTools \"Bash(gh:*)\"'")
+    assert _severity(tmp_path, jobs, "AIA001", header) == "critical"
+
+
+def test_isolated_opt_in_checkout_is_high(tmp_path: Path) -> None:
+    extra = "\n          path: pr\n          persist-credentials: false\n          allow-unsafe-pr-checkout: true"
+    jobs = _pr_target_job("actions/checkout@v4", extra)
+    assert _severity(tmp_path, jobs, "AIA008", PR_TARGET_HEADER) == "high"
+
+
+def test_guarded_pr_checkout_is_medium(tmp_path: Path) -> None:
+    jobs = _pr_target_job("actions/checkout@" + "a" * 40).replace(
+        "    runs-on: ubuntu-latest", "    if: github.event.label.name == 'review'\n    runs-on: ubuntu-latest"
+    )
+    assert _severity(tmp_path, jobs, "AIA008", PR_TARGET_HEADER) == "medium"
+
+
 def test_indirect_rule_covers_workflow_run(tmp_path: Path) -> None:
     header = "on:\n  workflow_run:\n    workflows: [CI]\npermissions:\n  contents: read\n"
     jobs = _action_job('prompt: "Fix CI"', 'claude_args: "--allowedTools Bash(gh:*)"')

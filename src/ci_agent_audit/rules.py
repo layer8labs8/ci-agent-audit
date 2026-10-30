@@ -86,11 +86,10 @@ RULES_CATALOG: dict[str, RuleMetadata] = {
             "(such as anthropics/claude-code-action prior to v1.0.94) or pinning to a mutable branch (@main/@master) "
             "exposes the pipeline to supply-chain and prompt-injection exploits."
         ),
-       remediation=(
+        remediation=(
             "Upgrade the tool to its latest safe release and pin it to an immutable "
             "full-length commit SHA or verified release tag."
         ),
-
         references=[
             "https://github.com/anthropics/claude-code-action/releases/tag/v1.0.94",
         ],
@@ -276,7 +275,7 @@ CLI_RUNNER = r"(?:npx|bunx|uvx|pipx\s+run|pnpm\s+dlx|yarn\s+dlx)(?:\s+-{1,2}\S+)
 CLI_INFO_ONLY = r"(?!\s+(?:--version|-v|--help|-h)\s*(?:$|[;&|)]))"
 
 SPOOFABLE_BOT_RE = re.compile(
-    r"(?:endsWith|contains)\s*\(\s*github\.(?:actor|triggering_actor|event\.sender\.login)\s*,\s*['\"]\[bot\]['\"]\s*\)",
+    r"(?<![!\w])(?:endsWith|contains)\s*\(\s*github\.(?:actor|triggering_actor|event\.sender\.login)\s*,\s*['\"]\[bot\]['\"]\s*\)",
     re.IGNORECASE,
 )
 
@@ -387,7 +386,7 @@ def _guard_strength(*conditions: str) -> str | None:
     strength = None
     for condition in conditions:
         if ACTOR_GUARD_RE.search(condition):
-            if "||" not in condition:
+            if all(ACTOR_GUARD_RE.search(branch) for branch in condition.split("||")):
                 return "full"
             strength = "partial"
     return strength
@@ -435,6 +434,15 @@ def _agent_output_sinks(
             if model_state.sources(str(with_block.get(key) or ""), model_env):
                 sinks.append((Severity.HIGH, f"chooses the `{key}` of actions/checkout"))
     return sinks
+
+
+def _agent_lacks_shell(with_block: Mapping[str, Any]) -> bool:
+    """Return True if an action's arguments leave its agent without shell access."""
+    args = str(with_block.get("claude_args") or "")
+    if re.search(r"--disallowed-?tools\b[^\n]*\bBash\b", args, re.IGNORECASE):
+        return True
+    allowlist = re.search(r"--allowed-?tools\b([^\n]*)", args, re.IGNORECASE)
+    return bool(allowlist) and "Bash" not in allowlist.group(1)
 
 
 def _has_cleared_token(step_env: Mapping[str, Any] | None) -> bool:
@@ -632,7 +640,7 @@ def _scan_github_job(
                 pinned = re.search(r"@[0-9a-f]{40}\b", uses_val.lower())
                 # Credentials kept out of a side folder is the documented way to inspect PR code
                 isolated = with_block.get("path") and str(with_block.get("persist-credentials")).lower() == "false"
-                unsafe_pr_checkout = unsafe_pr_checkout or opted_in or (bool(pinned) and not isolated)
+                unsafe_pr_checkout = unsafe_pr_checkout or ((opted_in or bool(pinned)) and not isolated)
 
         # Check step-level `if:` for spoofable [bot] check (AIA003)
         if SPOOFABLE_BOT_RE.search(step_if):
@@ -702,7 +710,7 @@ def _scan_github_job(
                 read_only_sandbox = str(with_block.get("sandbox") or "").strip().lower() == "read-only"
                 agent_unsandboxed = agent_unsandboxed or not read_only_sandbox
                 model_state.agent_steps.update({str(step["id"]).lower()} if step.get("id") else set())
-                if read_only_sandbox and taint_severity is None:
+                if (read_only_sandbox or _agent_lacks_shell(with_block)) and taint_severity is None:
                     taint_severity = Severity.HIGH
 
                 # AIA004: Check vulnerable or unpinned AI Action version
@@ -969,7 +977,9 @@ def _scan_github_job(
                             else ""
                         )
                     ),
-                    severity=Severity.HIGH if not unsafe_pr_checkout else None,
+                    severity=(
+                        Severity.MEDIUM if job_fully_guarded else (Severity.HIGH if not unsafe_pr_checkout else None)
+                    ),
                 )
             )
 
