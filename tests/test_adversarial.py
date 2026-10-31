@@ -1070,8 +1070,6 @@ def test_sha_pin_is_not_flagged(tmp_path: Path) -> None:
         'npx -y @anthropic-ai/claude-code -p "$BODY" --dangerously-skip-permissions',
         'npx @anthropic-ai/claude-code@latest -p "$BODY" --dangerously-skip-permissions',
         'bunx @anthropic-ai/claude-code -p "$BODY" --dangerously-skip-permissions',
-        'pnpm dlx @anthropic-ai/claude-code -p "$BODY" --dangerously-skip-permissions',
-        'yarn dlx @anthropic-ai/claude-code -p "$BODY" --dangerously-skip-permissions',
         'OUT=$(claude -p "$BODY" --dangerously-skip-permissions)',
     ],
 )

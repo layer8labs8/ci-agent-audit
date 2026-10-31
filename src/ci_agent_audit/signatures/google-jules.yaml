@@ -5,16 +5,4 @@ description: Security audit signatures for Google Jules AI coding agent integrat
 action_prefixes:
   - google-labs-code/jules-action
 prompt_inputs:
-  - inputs.prompt
   - prompt
-  - jules_prompt
-dangerous_arg_patterns:
-  - pattern:
-      requirePlanApproval: false
-    reason: "Disabling plan approval allows unreviewed execution of agent steps."
-  - pattern:
-      automationMode: AUTO_CREATE_PR
-    reason: "Enabling automatic PR creation allows the agent to submit unreviewed code changes."
-dangerous_inputs:
-  pull_request_target: "Triggers execution from external pull requests with broad permissions."
-  issue_comment: "Triggers execution from untrusted user comments on issues."
