@@ -178,7 +178,38 @@ ai_mr_review:
     assert "AIA001" in rule_ids
     assert "AIA002" in rule_ids
 
+def test_gitlab_ci_unpinned_mcp_detection(tmp_path: Path) -> None:
+    gl = tmp_path / ".gitlab-ci.yml"
+    gl.write_text(
+        """
+review:
+  script:
+    - npx -y @modelcontextprotocol/server-github
+""",
+        encoding="utf-8",
+    )
 
+    findings = scan_workflow_file(gl)
+    rule_ids = {f.rule_id for f in findings}
+    assert "AIA007" in rule_ids
+
+
+def test_gitlab_ci_pinned_mcp_not_flagged(tmp_path: Path) -> None:
+    gl = tmp_path / ".gitlab-ci.yml"
+    gl.write_text(
+        """
+review:
+  script:
+    - npx -y @modelcontextprotocol/server-github@1.2.0
+""",
+        encoding="utf-8",
+    )
+
+    findings = scan_workflow_file(gl)
+    rule_ids = {f.rule_id for f in findings}
+    assert "AIA007" not in rule_ids
+
+    
 def test_fixer_remediates_version_wildcard_and_permissions() -> None:
     raw = """name: Demo
 permissions: write-all
