@@ -1198,3 +1198,25 @@ def test_empty_scan_warns_instead_of_passing_silently(
 ) -> None:
     assert main(["scan", str(tmp_path)]) == 2
     assert "No workflow files" in capsys.readouterr().err
+
+def test_google_jules_run_is_detected(tmp_path: Path) -> None:
+    """Test that the audit engine successfully flags Google Jules workflows
+    when untrusted user input (like an issue comment body) is passed to the prompt.
+    """
+    
+    # 1. Define a mock GitHub Actions workflow string using Google Jules
+    # with an insecure/untrusted input pattern (comment body).
+    jobs = """
+jobs:
+  jules:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: google-labs-code/jules-action@v1
+        with:
+          prompt: ${{ github.event.comment.body }}
+          jules_api_key: ${{ secrets.JULES_API_KEY }}
+"""
+    
+    # 2. Feed the workflow into the test environment and verify 
+    # that the core security rule AIA001 (untrusted input into AI agent) is triggered.
+    assert "AIA001" in _rule_ids(tmp_path, jobs)
