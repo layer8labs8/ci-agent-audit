@@ -1,0 +1,22 @@
+name: AI code review
+on:
+  pull_request_target:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - id: ai
+        uses: anthropics/claude-code-action@v1.0.100
+        with:
+          prompt: "Review this pull request and suggest a fix."
+
+      - run: ${{ steps.ai.outputs.result }}

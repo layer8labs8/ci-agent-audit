@@ -1,0 +1,8 @@
+stages: [review]
+
+ai_review:
+  stage: review
+  image: node:22
+  script:
+    - npm install -g @anthropic-ai/claude-code
+    - claude -p "Review this merge request: $CI_MERGE_REQUEST_DESCRIPTION" --dangerously-skip-permissions

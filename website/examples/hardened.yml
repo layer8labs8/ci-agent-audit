@@ -1,0 +1,20 @@
+name: Triage issues from members
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  contents: read
+
+jobs:
+  triage:
+    if: contains(fromJSON('["OWNER", "MEMBER"]'), github.event.issue.author_association)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: step-security/harden-runner@v2
+        with:
+          egress-policy: block
+
+      - uses: anthropics/claude-code-action@v1.0.100
+        with:
+          prompt: "Summarize the open questions in this repository's docs."

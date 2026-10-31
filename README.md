@@ -7,6 +7,8 @@
 [![PyPI](https://img.shields.io/pypi/v/ci-agent-audit.svg)](https://pypi.org/project/ci-agent-audit/)
 ![Status: alpha](https://img.shields.io/badge/status-alpha-orange.svg)
 
+**[Try it in your browser](https://layer8labs8.github.io/ci-agent-audit/)** with no install. Paste a workflow and it's scanned on your machine.
+
 `ci-agent-audit` reads your GitHub Actions and GitLab CI files and warns you when an AI agent such as Claude Code, Gemini CLI, or Codex is set up in a way that an outsider could abuse. It only reads YAML files. It never runs your workflows, calls an AI model, or sends anything over the network.
 
 ## The problem in 30 seconds
@@ -223,7 +225,7 @@ False positives and missed attacks are just as useful. See [CONTRIBUTING.md](CON
 
 ## Support
 
-If this project helped you, I'm really glad. If you'd like to support it, you can [send a crypto tip](https://layer8labs8.github.io/GAME-OF-EVERYTHING/#support). If not, that's completely okay.
+If this project helped you, I'm really glad. If you'd like to support it, you can [send a crypto tip](https://layer8labs8.github.io/ci-agent-audit/#support). If not, that's completely okay.
 
 ## License
 
