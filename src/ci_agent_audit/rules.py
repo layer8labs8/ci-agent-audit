@@ -1162,6 +1162,25 @@ def _scan_gitlab_jobs(
         script_text = "\n".join(rendered_script_lines)
         script_line_num = job_body.get_key_line("script", job_body.__line__)
 
+        # AIA007: Unpinned MCP server in GitLab script
+        for pkg_name in _iter_unpinned_mcp_packages(script_text):
+            findings.append(
+                _make_finding(
+                    rule_id="AIA007",
+                    file_path=file_path,
+                    line=script_line_num,
+                    col=job_body.get_key_col("script"),
+                    job_id=str(job_name),
+                    step_name="script",
+                    tool_id=None,
+                    snippet=_get_snippet(raw_lines, script_line_num),
+                    message=(
+                        f"MCP server package `{pkg_name}` is dynamically executed via npx/uvx "
+                        "without an exact version pin."
+                    ),
+                )
+            )
+
         cli_sigs = _match_cli_signatures(script_text, signatures)
         for cli_sig in cli_sigs:
             taint_sources = find_all_taint_sources(script_text, tainted_env)
