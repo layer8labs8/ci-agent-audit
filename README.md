@@ -116,6 +116,26 @@ ci-agent-audit scan .github/workflows --fix
 
 Review the changes before you commit them, because your agent may need a permission that `--fix` removed. If a change would produce invalid YAML, the file is left as it was.
 
+## Ignore a finding you've reviewed
+
+Some risks are deliberate. Add a comment on the finding's line, or right above its step:
+
+```yaml
+# ci-agent-audit: ignore AIA006
+- uses: anthropics/claude-code-action@v1.0.100
+```
+
+To ignore a finding across a file, add `.ci-agent-audit.yml` to your repository. Every entry needs a reason:
+
+```yaml
+ignore:
+  - rule: AIA003
+    path: .github/workflows/triage.yml
+    reason: Public triage is deliberate, and the agent has no shell access.
+```
+
+The scan always says how many findings were ignored. Pull requests can add these ignores too, so review them like code. Use `--no-ignore` to see everything.
+
 ## Use it in CI
 
 Add this as `.github/workflows/ai-security.yml`:
@@ -165,6 +185,8 @@ repos:
 | `--severity` | Lowest severity to show | `low` |
 | `--fail-on` | Lowest severity that fails the build, or `none` | `high` |
 | `--ignore-rule` | Skip a rule. Can be repeated. | None |
+| `--config` | Load an ignore file | `.ci-agent-audit.yml` if present |
+| `--no-ignore` | Report everything, including ignored findings | Off |
 | `--signatures-dir` | Load your own tool signatures | None |
 | `--fix` | Apply the fixes above before scanning | Off |
 
@@ -198,6 +220,10 @@ A scanner finds risky patterns, not proven attacks. A clean report does not mean
 Most contributions are one small YAML file. Adding support for a new AI tool takes no Python, and you can start from an existing file in [`src/ci_agent_audit/signatures/`](src/ci_agent_audit/signatures/).
 
 False positives and missed attacks are just as useful. See [CONTRIBUTING.md](CONTRIBUTING.md) to get started, and [SECURITY.md](SECURITY.md) to report a vulnerability in this tool.
+
+## Support
+
+If this project helped you, I'm really glad. If you'd like to support it, you can [send a crypto tip](https://layer8labs8.github.io/GAME-OF-EVERYTHING/#support). If not, that's completely okay.
 
 ## License
 

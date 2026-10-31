@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Ignore reviewed findings with `# ci-agent-audit: ignore AIA006` comments or a `.ci-agent-audit.yml` file, and see everything with `--no-ignore`.
+- `AIA007` now checks GitLab CI scripts. Thanks to @kenzyyshahin.
+
 ## 0.1.1 (2026-10-31)
 
 ### Added

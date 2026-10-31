@@ -20,6 +20,7 @@ from ci_agent_audit.formatters import (
 from ci_agent_audit.models import Finding, Severity
 from ci_agent_audit.rules import RULES_CATALOG, scan_workflow_file
 from ci_agent_audit.signatures_loader import SignatureValidationError, load_signatures
+from ci_agent_audit.suppress import DEFAULT_CONFIG, ConfigError, filter_findings, load_config
 
 
 def _discover_workflow_files(paths: Sequence[str]) -> list[Path]:
@@ -86,6 +87,15 @@ def _build_parser() -> argparse.ArgumentParser:
         action="append",
         default=[],
         help="Rule ID to ignore (can be specified multiple times, e.g. --ignore-rule AIA006)",
+    )
+    scan_p.add_argument(
+        "--config",
+        help=f"Ignore file to load (default: {DEFAULT_CONFIG} when it exists)",
+    )
+    scan_p.add_argument(
+        "--no-ignore",
+        action="store_true",
+        help="Report everything, including findings ignored by comments or the config file",
     )
     scan_p.add_argument(
         "--signatures-dir",
@@ -206,8 +216,18 @@ def main(argv: Sequence[str] | None = None) -> int:
         min_sev = Severity(args.severity)
         ignored = {r.upper() for r in args.ignore_rule}
 
+        config_path = Path(args.config or DEFAULT_CONFIG)
+        entries = []
+        if not args.no_ignore and (args.config or config_path.is_file()):
+            try:
+                entries = load_config(config_path)
+            except ConfigError as exc:
+                print(f"Error: {exc}", file=sys.stderr)
+                return 2
+
         all_findings: list[Finding] = []
         unreadable: list[Path] = []
+        suppressed = 0
         for wf in files:
             try:
                 file_findings = scan_workflow_file(wf, signatures=signatures)
@@ -215,6 +235,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                 unreadable.append(wf)
                 print(f"Error: Could not scan {wf.as_posix()}: {exc}", file=sys.stderr)
                 continue
+            if not args.no_ignore:
+                lines = wf.read_text(encoding="utf-8").splitlines()
+                file_findings, count = filter_findings(file_findings, entries, lines)
+                suppressed += count
             for f in file_findings:
                 if f.rule_id.upper() in ignored:
                     continue
@@ -234,6 +258,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             Path(args.output).write_text(output_text, encoding="utf-8")
         elif output_text:
             print(output_text)
+
+        if suppressed:
+            print(f"ci-agent-audit: {suppressed} finding(s) ignored. Use --no-ignore to see them.", file=sys.stderr)
 
         if unreadable:
             return 2
