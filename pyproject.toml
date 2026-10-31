@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ci-agent-audit"
-version = "0.1.1"
+version = "0.1.2"
 description = "Find prompt injection and unsafe AI agent setups in GitHub Actions and GitLab CI."
 readme = "README.md"
 license = "MIT"
@@ -46,7 +46,8 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/layer8labs8/ci-agent-audit"
+Homepage = "https://layer8labs8.github.io/ci-agent-audit/"
+Source = "https://github.com/layer8labs8/ci-agent-audit"
 Issues = "https://github.com/layer8labs8/ci-agent-audit/issues"
 
 [project.optional-dependencies]
@@ -65,4 +66,4 @@ ci_agent_audit = ["signatures/*.yaml"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["src"]
+pythonpath = ["src", "tools", "website"]
