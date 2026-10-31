@@ -4,6 +4,7 @@ vendor: CodeRabbit
 description: AI pull request reviewer and summarizer action for GitHub workflows.
 action_prefixes:
   - coderabbitai/ai-pr-reviewer
+  - coderabbitai/openai-pr-reviewer
   - coderabbitai/coderabbit-action
 cli_binaries:
   - coderabbit

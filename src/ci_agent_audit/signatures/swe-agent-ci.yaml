@@ -2,9 +2,6 @@ id: swe-agent-ci
 name: SWE-agent Autonomous Coding Runner
 vendor: Princeton NLP / SWE-agent
 description: SWE-agent CLI and workflow action for automated GitHub issue resolution.
-action_prefixes:
-  - SWE-agent/SWE-agent-action
-  - princeton-nlp/SWE-agent
 cli_binaries:
   - sweagent
 prompt_inputs:

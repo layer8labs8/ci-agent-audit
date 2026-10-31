@@ -2,9 +2,6 @@ id: aider-ci
 name: Aider AI Pair Programmer in CI
 vendor: Aider
 description: Aider CLI and GitHub Actions used for automated code edits and issue resolution in CI workflows.
-action_prefixes:
-  - PaulGauthier/aider-action
-  - Aider-AI/aider-action
 cli_binaries:
   - aider
 cli_packages:
@@ -17,8 +14,7 @@ cli_prompt_flags:
   - -m
   - --message
   - --message-file
-dangerous_inputs:
-  yes_always: "true"
+dangerous_inputs: {}
 dangerous_arg_patterns:
   - pattern: "--yes-always"
     reason: "Automatically confirms all file edits and shell commands suggested by the LLM in Aider."

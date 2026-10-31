@@ -13,6 +13,7 @@ cli_packages:
   - "@anthropic-ai/claude-code"
 prompt_inputs:
   - prompt
+  - prompt_file
   - direct_prompt
   - custom_instructions
   - system_prompt

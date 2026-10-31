@@ -47,6 +47,16 @@ python -m ci_agent_audit.cli validate-signatures
 
 A minimal workflow that gets a wrong result is a great first contribution. Open a **false alarm or missed attack** issue, or add it as a test in `tests/test_adversarial.py`.
 
+## Add a Benchmark Case
+
+`benchmark/cases.yml` holds small labelled repositories that say which rules must fire and which must stay quiet. A new case is a good way to show a bug, and it needs no Python. See how the scanner scores with:
+
+```bash
+python tools/run_benchmark.py
+```
+
+If the scanner can't catch your case yet, mark it `gap: true`. CI keeps every other case passing.
+
 ## Running Development Tests
 
 ```bash

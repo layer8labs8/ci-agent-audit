@@ -12,11 +12,12 @@ import zipfile
 ROOT = Path(__file__).resolve().parent.parent
 SOURCE = ROOT / "website"
 PACKAGE = ROOT / "src" / "ci_agent_audit"
-sys.path[:0] = [str(ROOT / "src"), str(SOURCE)]
+sys.path[:0] = [str(ROOT / "src"), str(ROOT / "tools"), str(SOURCE)]
 
 from ci_agent_audit import __version__  # noqa: E402
 from ci_agent_audit.rules import RULES_CATALOG  # noqa: E402
 from ci_agent_audit.signatures_loader import load_signatures  # noqa: E402
+from run_benchmark import Score, load_cases, run  # noqa: E402
 from site_scan import scan_text  # noqa: E402
 
 EXAMPLES = [
@@ -38,6 +39,15 @@ QUESTIONS = {
     "AIA009": ("Is the agent told or allowed to fetch issue text with gh?", "The prompt looks clean, but the agent still reads attacker text."),
     "AIA010": ("Does the model's answer reach a shell or git command?", "A hijacked answer becomes a command or a checkout of attacker code."),
     "AIA011": ("Is agent work pushed straight to main?", "Injected changes land without review."),
+}
+
+BENCHMARK_GROUPS = {
+    "direct": "Direct risks",
+    "composite": "Local composite actions",
+    "reusable": "Reusable workflows",
+    "guards": "Guard and data-flow traps",
+    "safe": "Safe setups",
+    "gaps": "Known gaps",
 }
 
 SUPPORT = [
@@ -73,6 +83,24 @@ def _support() -> str:
     )
 
 
+def _benchmark() -> dict[str, str]:
+    cases = load_cases()
+    total = Score()
+    rows = []
+    for group, score in run(cases).items():
+        total.add(score)
+        rows.append(
+            f'<tr><th scope="row">{escape(BENCHMARK_GROUPS[group])}</th><td>{len(cases[group])}</td>'
+            f"<td>{score.found}</td><td>{len(score.missed)}</td><td>{len(score.false_alarms)}</td></tr>"
+        )
+    return {
+        "benchmark": "\n".join(rows),
+        "case_count": str(sum(len(items) for items in cases.values())),
+        "recall": f"{total.recall:.1%}",
+        "precision": f"{total.precision:.0%}",
+    }
+
+
 def _examples() -> str:
     data = []
     for slug, label, file_name in EXAMPLES:
@@ -99,6 +127,7 @@ def build(out: Path) -> None:
         "tools": _tools(),
         "support": _support(),
         "examples": _examples(),
+        **_benchmark(),
     }.items():
         page = page.replace(f"<!-- {token} -->", value)
     (out / "index.html").write_text(page, encoding="utf-8")

@@ -47,6 +47,12 @@ def test_page_shows_each_support_address(site: Path) -> None:
     assert all(f'data-copy="{address}"' in page for _, address in SUPPORT)
 
 
+def test_page_shows_the_benchmark(site: Path) -> None:
+    page = (site / "index.html").read_text(encoding="utf-8")
+    assert "<th scope=\"row\">Local composite actions</th>" in page
+    assert "% recall" in page
+
+
 def test_examples_match_what_they_show(site: Path) -> None:
     examples = _examples(site)
     severities = {slug: {f["severity"] for f in example["result"]["findings"]} for slug, example in examples.items()}

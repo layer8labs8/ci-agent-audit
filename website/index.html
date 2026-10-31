@@ -23,6 +23,7 @@
 <nav aria-label="Main">
 <a href="#scanner">Scanner</a>
 <a href="#checks">Checks</a>
+<a href="#accuracy">Accuracy</a>
 <a href="#install">Install</a>
 <a href="#support">Support</a>
 <a href="https://github.com/layer8labs8/ci-agent-audit">GitHub</a>
@@ -81,6 +82,11 @@
 <p class="after">This attack is called prompt injection. The CI version is often called PromptPwnd.</p>
 </section>
 
+<section class="section" id="follows">
+<h2>It follows your local actions</h2>
+<p class="intro">An agent is often hidden one step away, inside <code>./.github/actions/triage</code> or a reusable workflow. The command line follows those local calls, carries untrusted text through inputs and outputs, and judges them with the real trigger, checks, and token of the workflow that made the call. Each finding points at the file that holds the problem.</p>
+</section>
+
 <section class="section" id="checks">
 <h2>What it checks</h2>
 <p class="intro">Protection you already have lowers the severity. Prompt injection drops from Critical to High with a read-only token, and to Medium behind a complete author check.</p>
@@ -97,7 +103,22 @@
 <ul class="tools">
 <!-- tools -->
 </ul>
+<p class="intro">One scan checks for all of them, because it only reads YAML and never starts an agent. Claude Code, Gemini CLI, and Codex have been tried on real workflows. The others pass the same automated tests but have seen little real use so far.</p>
 <p class="intro">Is your tool missing? Adding one is usually a single YAML file with no Python. <a href="https://github.com/layer8labs8/ci-agent-audit/issues?q=is%3Aissue%20is%3Aopen%20label%3A%22good%20first%20issue%22">Pick a good first issue</a> or read the <a href="https://github.com/layer8labs8/ci-agent-audit/blob/main/CONTRIBUTING.md">contributing guide</a>.</p>
+</section>
+
+<section class="section" id="accuracy">
+<h2>How accurate is it?</h2>
+<p class="intro">Every change runs against <!-- case_count --> small repositories labelled with what must fire and what must stay quiet.</p>
+<div class="numbers-wrap">
+<table class="numbers">
+<thead><tr><th scope="col">Cases</th><th scope="col">Number</th><th scope="col">Caught</th><th scope="col">Missed</th><th scope="col">False alarms</th></tr></thead>
+<tbody>
+<!-- benchmark -->
+</tbody>
+</table>
+</div>
+<p class="intro">That's <!-- recall --> recall and <!-- precision --> precision on these cases. We wrote them ourselves, so treat this as a regression check and not a promise about your repository. Engine changes are also compared on the CI files of 135 public repositories that use AI agents.</p>
 </section>
 
 <section class="section" id="install">
@@ -145,7 +166,7 @@ jobs:
 <h2>What it can't do</h2>
 <ul class="limits">
 <li>A scanner finds risky patterns, not proven attacks. A clean report doesn't mean a workflow is safe.</li>
-<li>It reads one file at a time, so it can't follow reusable workflows or composite actions.</li>
+<li>This page reads one file. The command line follows local composite actions and reusable workflows, but it never downloads remote ones.</li>
 <li>It can't see an agent reading issues through its own built-in tools when the workflow doesn't mention them.</li>
 </ul>
 <p class="intro"><a href="https://github.com/layer8labs8/ci-agent-audit#what-it-cant-do">See the full list</a></p>

@@ -77,11 +77,13 @@ const renderVerdict = (result) => {
     .map((severity) => [result.findings.filter((finding) => finding.severity === severity).length, severity])
     .filter(([total]) => total);
   const failing = result.findings.some((finding) => ['critical', 'high'].includes(finding.severity));
-  const stamp = failing ? ['fails', 'Fails'] : count ? ['passes', 'Passes'] : ['clean', 'Clean'];
+  const quiet = result.local_calls ? ['passes', 'Partial'] : ['clean', 'Clean'];
+  const stamp = failing ? ['fails', 'Fails'] : count ? ['passes', 'Passes'] : quiet;
   let summary = "A clean report doesn't prove a workflow is safe.";
   if (count) summary = totals.map(([total, severity]) => `${total} ${severity}`).join(', ');
   if (count && !failing) summary += '. Below the default CI failure level.';
   if (result.ignored) summary += ` ${result.ignored} ignored by a comment.`;
+  if (result.local_calls) summary += " It calls local actions or workflows this page can't see, so run the CLI to follow them.";
 
   const verdict = element('div', 'verdict');
   const title = count ? `${count} issue${count === 1 ? '' : 's'} found` : 'No issues found';

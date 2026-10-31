@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import re
 import tempfile
 
 import yaml
@@ -40,8 +41,15 @@ def scan_text(text: str) -> str:
     with tempfile.TemporaryDirectory() as folder:
         path = Path(folder) / "workflow.yml"
         path.write_text(text, encoding="utf-8")
-        findings = scan_workflow_file(path)
+        findings, ignored = filter_findings(scan_workflow_file(path), [])
 
-    findings, ignored = filter_findings(findings, [], lines)
     findings.sort(key=lambda finding: (-Severity(finding.severity).rank, finding.line))
-    return json.dumps({"kind": kind, "ignored": ignored, "findings": [finding.to_dict() for finding in findings]})
+    local_calls = any(re.match(r"\s*(?:- )?uses:\s*[\"']?\./", line) for line in lines)
+    return json.dumps(
+        {
+            "kind": kind,
+            "ignored": ignored,
+            "local_calls": local_calls,
+            "findings": [finding.to_dict() for finding in findings],
+        }
+    )
