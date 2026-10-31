@@ -141,6 +141,7 @@ Protection you already have lowers the severity. For example, prompt injection d
 | OpenHands | Action and command | Not yet |
 | PR-Agent | Action and command | Not yet |
 | SWE-agent | Command | Not yet |
+| Google Jules (next release) | Action | Not yet |
 
 One scan checks for all of them, because it only reads your YAML and never starts an agent. Every tool goes through the same automated detection tests. The last column says how much real-world use backs that up, so reports for the newer ones are especially welcome.
 

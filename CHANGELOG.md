@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Google Jules signature. Thanks to @Neeraj111010.
+
 ## 0.1.3 (2026-10-31)
 
 ### Added
