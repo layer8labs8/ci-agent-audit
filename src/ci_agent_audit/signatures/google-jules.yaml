@@ -1,0 +1,8 @@
+id: google-jules
+name: Google Jules
+vendor: Google
+description: Security audit signatures for Google Jules AI coding agent integration (google-labs-code/jules-action).
+action_prefixes:
+  - google-labs-code/jules-action
+prompt_inputs:
+  - prompt
