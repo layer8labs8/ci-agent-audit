@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ci-agent-audit"
-version = "0.1.1"
+version = "0.1.2"
 description = "Find prompt injection and unsafe AI agent setups in GitHub Actions and GitLab CI."
 readme = "README.md"
 license = "MIT"
