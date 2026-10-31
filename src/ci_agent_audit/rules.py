@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+import os
 from pathlib import Path
 import re
-from typing import Any, Mapping
+from typing import Any, Iterator, Mapping
+
+import yaml
 
 from ci_agent_audit.models import ActionSignature, Finding, RuleMetadata, Severity
 from ci_agent_audit.signatures_loader import load_signatures
@@ -242,6 +246,9 @@ NO_SUBJECT_TRIGGERS = {"schedule", "workflow_dispatch", "push"}
 # Reusable workflows are usually gated by their caller, which a single file cannot show
 CALLER_GATED_TRIGGERS = {"workflow_call", "workflow_dispatch"}
 
+# Fork `pull_request` runs get no secrets, and `repository_dispatch` needs a write token to send
+LIMITED_REACH_TRIGGERS = CALLER_GATED_TRIGGERS | {"pull_request", "repository_dispatch"}
+
 GH_TOOL_GRANT_RE = re.compile(r"Bash\(gh[\s:*)]")
 
 # Ways a CLI is started besides its bare name: wrappers, env prefixes, and package runners
@@ -254,10 +261,22 @@ ACTOR_GUARD_RE = re.compile(
     r"github\.(?:actor|triggering_actor)\s*==|==\s*github\.(?:actor|triggering_actor)\b|"
     r"(?<!!)contains\(\s*fromjson\(.*?\)\s*,\s*github\.(?:actor|triggering_actor)\s*\)|"
     r"head\.repo\.full_name\s*==\s*github\.repository|"
-    r"github\.event\.label\.name\s*==",  # Applying a label needs triage access
+    r"head\.repo\.fork\s*==\s*false|!\s*github\.event\.pull_request\.head\.repo\.fork\b|"
+    r"github\.event\.label\.name\s*==|contains\(\s*github\.event\.label\.name\b|"  # Labels need triage access
+    r"passed-permission-check",  # Stands in for a needed job that blocks on a permission check
     re.IGNORECASE,
 )
 
+# Paths only people with write access can start
+TRUSTED_EVENT_RE = re.compile(r"github\.event_name\s*==\s*['\"](?:workflow_dispatch|schedule|push)['\"]")
+PERMISSION_GATE = "passed-permission-check"
+PERMISSION_CHECK_RE = re.compile(
+    r"getCollaboratorPermissionLevel|collaborators/[^\s\"']*/permission|check-(?:user|actor)-permission"
+)
+PERMISSION_LEVEL_RE = re.compile(r"\b(?:admin|maintain|write)\b")
+HARD_FAIL_RE = re.compile(r"core\.setFailed|\bexit\s+1\b|process\.exit\(1\)|throw\s+new\s+Error")
+
+RUNS_AFTER_SKIP_RE = re.compile(r"\b(?:always|failure|cancelled)\s*\(", re.IGNORECASE)
 EVAL_LINE_RE = re.compile(r"\beval\b|\b(?:ba)?sh\s+-c\b|\bpython3?\s+-c\b|\bnode\s+-e\b|\|\s*(?:ba)?sh\b")
 FILE_EXEC_RE = r"(?:\b(?:ba)?sh|\bsource|\bpython3?|\bnode|(?:^|[;&|])\s*\.)\s+\S*"
 PR_CHECKOUT_COMMAND_RE = re.compile(r"\bgh\s+pr\s+checkout\b|\bgit\s+fetch\b[^\n]*\bpull/")
@@ -355,9 +374,12 @@ def _match_cli_signatures(
     """Return all AI CLI signatures invoked inside a `run:` shell script."""
     matched: list[ActionSignature] = []
     for sig in signatures:
+        # Most scripts name no agent at all, so skip the regexes for them
+        if not any(name in run_script for name in (*sig.cli_binaries, *sig.cli_packages)):
+            continue
         subcommand = rf"\s+(?:{'|'.join(map(re.escape, sig.cli_subcommands))})\b" if sig.cli_subcommands else ""
         patterns = [
-            rf"{CLI_PREFIX}(?:{CLI_RUNNER})?(?:[\w./~-]*/)?{re.escape(binary)}(?![\w.-]){subcommand}{CLI_INFO_ONLY}"
+            rf"{CLI_PREFIX}(?:{CLI_RUNNER})?(?:[\w./~-]*/)?{re.escape(binary)}(?![\w./-]){subcommand}{CLI_INFO_ONLY}"
             for binary in sig.cli_binaries
         ]
         patterns += [
@@ -381,15 +403,140 @@ def _absorb_step(state: TaintState, step: LineDict) -> None:
             state.absorb_github_script(step_id, str(with_block["script"]))
 
 
+def _split_top(expression: str, operator: str) -> list[str]:
+    """Split on `||` or `&&`, leaving those inside parentheses and strings alone."""
+    parts: list[str] = []
+    depth = idx = start = 0
+    quote = ""
+    while idx < len(expression):
+        char = expression[idx]
+        if quote:
+            quote = "" if char == quote else quote
+        elif char in "'\"":
+            quote = char
+        elif char == "(":
+            depth += 1
+        elif char == ")":
+            depth -= 1
+        elif depth == 0 and expression.startswith(operator, idx):
+            parts.append(expression[start:idx])
+            idx = start = idx + len(operator)
+            continue
+        idx += 1
+    parts.append(expression[start:])
+    return parts
+
+
+def _unwrap(expression: str) -> str:
+    """Remove `${{ }}` and any parentheses around a whole expression."""
+    text = expression.strip()
+    if text.startswith("${{") and text.endswith("}}") and text.count("${{") == 1:
+        text = text[3:-2].strip()
+    while text.startswith("(") and text.endswith(")"):
+        depth = 0
+        for idx, char in enumerate(text):
+            depth += (char == "(") - (char == ")")
+            if depth == 0:
+                break
+        if idx != len(text) - 1:
+            break
+        text = text[1:-1].strip()
+    return text
+
+
+def _every_path_guarded(condition: str) -> bool:
+    """Return True if no path through an `if:` avoids a check on who started the run."""
+    text = _unwrap(condition)
+    branches = _split_top(text, "||")
+    if len(branches) > 1:
+        return all(_every_path_guarded(branch) for branch in branches)
+    factors = _split_top(text, "&&")
+    if len(factors) > 1:
+        return any(_every_path_guarded(factor) for factor in factors)
+    return bool(ACTOR_GUARD_RE.search(text) or TRUSTED_EVENT_RE.search(text))
+
+
 def _guard_strength(*conditions: str) -> str | None:
     """Return "full" for a guard on every path through an `if:`, "partial" if `||` may skip it."""
     strength = None
     for condition in conditions:
         if ACTOR_GUARD_RE.search(condition):
-            if all(ACTOR_GUARD_RE.search(branch) for branch in condition.split("||")):
+            if _every_path_guarded(condition):
                 return "full"
             strength = "partial"
     return strength
+
+
+def _step_text(step: Mapping[str, Any]) -> str:
+    with_block = step.get("with")
+    script = with_block.get("script") if isinstance(with_block, Mapping) else ""
+    return f"{step.get('uses') or ''}\n{step.get('run') or ''}\n{script or ''}"
+
+
+def _checks_permission(step: Mapping[str, Any]) -> bool:
+    return bool(PERMISSION_CHECK_RE.search(_step_text(step)))
+
+
+def _fails_on_permission(step: Mapping[str, Any]) -> bool:
+    """Return True if a permission check always runs and stops the job when the level is too low."""
+    text = _step_text(step)
+    if step.get("if") or step.get("continue-on-error"):
+        return False
+    return bool(HARD_FAIL_RE.search(text) and PERMISSION_LEVEL_RE.search(text))
+
+
+def _references_step(step_ids: set[str], *conditions: str) -> bool:
+    return any(f"steps.{step_id}." in condition.lower() for step_id in step_ids for condition in conditions)
+
+
+def _blocks_on_permission(job: Mapping[str, Any], name: str, dependent_if: str) -> bool:
+    """Return True if a needed job stops its dependents unless a permission check passes."""
+    steps = job.get("steps")
+    checks = [
+        step for step in (steps if isinstance(steps, list) else []) if isinstance(step, Mapping) and _checks_permission(step)
+    ]
+    if not checks:
+        return False
+    return f"needs.{name}.".lower() in dependent_if.lower() or any(_fails_on_permission(step) for step in checks)
+
+
+def _needed_jobs(job: Mapping[str, Any]) -> list[str]:
+    needs = job.get("needs")
+    if isinstance(needs, str):
+        return [needs]
+    return [str(name) for name in needs] if isinstance(needs, list) else []
+
+
+def _needed_conditions(jobs: Mapping[str, Any], job_id: Any) -> tuple[str, ...]:
+    """Return the `if:` of each job this one needs, since a skipped job skips its dependents."""
+    conditions: list[str] = []
+    seen: set[str] = set()
+    pending = [job_id]
+    while pending:
+        job = jobs.get(pending.pop())
+        # always() and its relatives run a job even when what it needs was skipped
+        if not isinstance(job, Mapping) or RUNS_AFTER_SKIP_RE.search(str(job.get("if") or "")):
+            continue
+        for name in _needed_jobs(job):
+            if name not in seen and isinstance(jobs.get(name), Mapping):
+                seen.add(name)
+                pending.append(name)
+                conditions.append(str(jobs[name].get("if") or ""))
+                if _blocks_on_permission(jobs[name], name, str(job.get("if") or "")):
+                    conditions.append(PERMISSION_GATE)
+    return tuple(conditions)
+
+
+def _describe_sources(sources: list[str]) -> str:
+    """Shorten long `(via ...)` chains to where the data came from and how it arrived."""
+    short: list[str] = []
+    for source in sources:
+        hops = source.split(" (via ")
+        label = source if len(hops) <= 3 else f"{hops[0]} (via {hops[1]} ... (via {hops[-1]}"
+        if label not in short:
+            short.append(label)
+    extra = f" and {len(short) - 3} more" if len(short) > 3 else ""
+    return ", ".join(short[:3]) + extra
 
 
 def _is_read_only_token(perms: Any) -> bool:
@@ -459,22 +606,198 @@ def _is_agent_step(step: LineDict, signatures: list[ActionSignature]) -> bool:
     return bool(step.get("run")) and bool(_match_cli_signatures(str(step["run"]), signatures))
 
 
+# GitHub allows 10 levels of composite actions. The visit limit stops fan-out in crafted files.
+MAX_CALL_DEPTH = 10
+MAX_FOLLOWED_CALLS = 5000
+
+
+@dataclass
+class _Source:
+    """A YAML file that steps or jobs came from."""
+
+    path: Path
+    lines: list[str]
+
+
+class _Follow:
+    """Loads local actions and reusable workflows for one scan, without leaving the repository."""
+
+    def __init__(self, root: Path | None) -> None:
+        self.root = root
+        self.visits_left = MAX_FOLLOWED_CALLS
+        self._loaded: dict[Path, tuple[_Source, LineDict] | None] = {}
+
+    @staticmethod
+    def _read(path: Path) -> tuple[_Source, LineDict] | None:
+        try:
+            root, lines = load_workflow_file(path)
+        except (yaml.YAMLError, UnicodeDecodeError, OSError):
+            return None
+        return (_Source(path, lines), root) if isinstance(root, LineDict) else None
+
+    def _load(self, relative: str, stack: tuple[Path, ...]) -> tuple[_Source, LineDict] | None:
+        if self.root is None or self.visits_left <= 0 or len(stack) > MAX_CALL_DEPTH:
+            return None
+        path = Path(os.path.normpath(self.root / relative))
+        if path in stack or not path.resolve().is_relative_to(self.root.resolve()):
+            return None
+        self.visits_left -= 1
+        if path not in self._loaded:
+            self._loaded[path] = self._read(path)
+        return self._loaded[path]
+
+    def action(self, uses: str, stack: tuple[Path, ...]) -> tuple[_Source, LineDict] | None:
+        """Return the local composite action a step's `uses:` names."""
+        if not uses.startswith("./"):
+            return None
+        for name in ("action.yml", "action.yaml"):
+            loaded = self._load(f"{uses}/{name}", stack)
+            runs = loaded[1].get("runs") if loaded else None
+            if (
+                isinstance(runs, Mapping)
+                and str(runs.get("using")).lower() == "composite"
+                and isinstance(runs.get("steps"), list)
+            ):
+                return loaded
+        return None
+
+    def workflow(self, uses: str, stack: tuple[Path, ...]) -> tuple[_Source, LineDict] | None:
+        """Return the local reusable workflow a job's `uses:` names."""
+        if not uses.startswith("./"):
+            return None
+        loaded = self._load(uses, stack)
+        return loaded if loaded and isinstance(loaded[1].get("jobs"), LineDict) else None
+
+
+def _repo_root(path: Path) -> Path | None:
+    """Return the repository root of a file in `.github/workflows`."""
+    return path.parents[2] if path.parts[-3:-1] == (".github", "workflows") else None
+
+
+def _call_inputs(declared: Any, passed: Any) -> dict[str, Any]:
+    """Return the input values of a call: declared defaults, replaced by what the caller passed."""
+    values: dict[str, Any] = {}
+    if isinstance(declared, Mapping):
+        values = {str(name): spec.get("default") for name, spec in declared.items() if isinstance(spec, Mapping)}
+    if isinstance(passed, Mapping):
+        values.update({str(name): value for name, value in passed.items()})
+    return values
+
+
+def _declared_outputs(declared: Any) -> dict[str, Any]:
+    if not isinstance(declared, Mapping):
+        return {}
+    return {str(name): spec.get("value") for name, spec in declared.items() if isinstance(spec, Mapping)}
+
+
+def _workflow_call(root: LineDict) -> Mapping[str, Any]:
+    """Return the `on.workflow_call` block of a reusable workflow."""
+    triggers = root.get("on")
+    block = triggers.get("workflow_call") if isinstance(triggers, Mapping) else None
+    return block if isinstance(block, Mapping) else {}
+
+
+def _walk_steps(
+    steps: list[Any],
+    source: _Source | None,
+    states: tuple[TaintState, ...],
+    follow: _Follow | None,
+    stack: tuple[Path, ...] = (),
+    conditions: tuple[str, ...] = (),
+) -> Iterator[tuple[int, LineDict, _Source | None, tuple[str, ...]]]:
+    """Yield each step with its file and inherited `if:` conditions, entering local composite actions.
+
+    Callers update `states` between steps, so a local action's inputs read the taint known at its call.
+    """
+    for idx, step in enumerate(steps):
+        if not isinstance(step, LineDict):
+            continue
+        yield idx, step, source, conditions
+        called = follow.action(str(step.get("uses") or "").strip(), stack) if follow else None
+        if called is None:
+            continue
+        inner, action = called
+        inputs = _call_inputs(action.get("inputs"), step.get("with"))
+        step_env = step.get("env") if isinstance(step.get("env"), Mapping) else None
+        saved = [state.enter_call(inputs, step_env) for state in states]
+        yield from _walk_steps(
+            action["runs"]["steps"],
+            inner,
+            states,
+            follow,
+            (*stack, inner.path),
+            (*conditions, str(step.get("if") or "")),
+        )
+        outputs = _declared_outputs(action.get("outputs"))
+        for state, outer in zip(states, saved):
+            state.leave_call(outer, str(step.get("id") or ""), outputs)
+
+
+def _called_workflow_outputs(
+    job_id: str,
+    job_data: LineDict,
+    called: tuple[_Source, LineDict],
+    tainted: Mapping[str, list[str]],
+    subject_fields_empty: bool,
+    signatures: list[ActionSignature] | None,
+    follow: _Follow,
+    stack: tuple[Path, ...],
+) -> dict[str, list[str]]:
+    """Map `needs.<job>.outputs.<name>` for a job that calls a local reusable workflow."""
+    source, root = called
+    block = _workflow_call(root)
+    model_only = signatures is not None
+    caller = TaintState(refs=dict(tainted), subject_fields_empty=subject_fields_empty, agent_only=model_only)
+    inner = _collect_job_output_taint(
+        root["jobs"],
+        root.get("env") if isinstance(root.get("env"), Mapping) else None,
+        subject_fields_empty,
+        signatures,
+        seed=caller.input_refs(_call_inputs(block.get("inputs"), job_data.get("with"))),
+        follow=follow,
+        stack=(*stack, source.path),
+    )
+    called_jobs = TaintState(
+        refs={key.replace("needs.", "jobs.", 1): value for key, value in inner.items()},
+        agent_only=model_only,
+    )
+    outputs: dict[str, list[str]] = {}
+    for name, value in _declared_outputs(block.get("outputs")).items():
+        sources = called_jobs.sources(str(value or ""), {})
+        if sources:
+            outputs[f"needs.{job_id}.outputs.{name}".lower()] = sources
+    return outputs
+
+
 def _collect_job_output_taint(
     jobs: Mapping[str, Any],
     workflow_env: Mapping[str, Any] | None,
     subject_fields_empty: bool,
     signatures: list[ActionSignature] | None = None,
+    *,
+    seed: Mapping[str, list[str]] | None = None,
+    follow: _Follow | None = None,
+    stack: tuple[Path, ...] = (),
 ) -> dict[str, list[str]]:
     """Map tainted `needs.<job>.outputs.<name>` references, following chains between jobs.
 
     With `signatures`, the taint source is model text from agent steps instead of event data.
+    `seed` holds what is already known, such as the inputs of a reusable workflow.
     """
-    tainted: dict[str, list[str]] = {}
+    tainted: dict[str, list[str]] = dict(seed or {})
     # Each pass can only extend a chain by one job, regardless of file order
     for _ in range(len(jobs)):
         before = len(tainted)
         for job_id, job_data in jobs.items():
             if not isinstance(job_data, LineDict):
+                continue
+            called = follow.workflow(str(job_data.get("uses") or "").strip(), stack) if follow else None
+            if called is not None:
+                tainted.update(
+                    _called_workflow_outputs(
+                        str(job_id), job_data, called, tainted, subject_fields_empty, signatures, follow, stack
+                    )
+                )
                 continue
             job_env = job_data.get("env") if isinstance(job_data.get("env"), Mapping) else None
             model_only = signatures is not None
@@ -485,11 +808,10 @@ def _collect_job_output_taint(
                 agent_only=model_only,
             )
             steps = job_data.get("steps")
-            for step in steps if isinstance(steps, list) else []:
-                if isinstance(step, LineDict):
-                    _absorb_step(state, step)
-                    if signatures is not None and step.get("id") and _is_agent_step(step, signatures):
-                        state.agent_steps.add(str(step["id"]).lower())
+            for _, step, _, _ in _walk_steps(steps if isinstance(steps, list) else [], None, (state,), follow, stack):
+                _absorb_step(state, step)
+                if signatures is not None and step.get("id") and _is_agent_step(step, signatures):
+                    state.agent_steps.add(str(step["id"]).lower())
             outputs = job_data.get("outputs")
             for name, value in outputs.items() if isinstance(outputs, Mapping) else []:
                 sources = state.sources(str(value), state.env)
@@ -513,32 +835,17 @@ def scan_workflow_file(
         return []
 
     findings: list[Finding] = []
-    triggers = _extract_triggers(root)
-    workflow_env = root.get("env") if isinstance(root.get("env"), Mapping) else None
-    workflow_perms = root.get("permissions")
-
-    jobs = root.get("jobs")
-    if isinstance(jobs, LineDict):
-        job_output_taint = _collect_job_output_taint(
-            jobs, workflow_env, bool(triggers) and triggers <= NO_SUBJECT_TRIGGERS
-        )
-        for job_id, job_data in jobs.items():
-            if not isinstance(job_data, LineDict):
-                continue
-            findings.extend(
-                _scan_github_job(
-                    file_path=file_path,
-                    raw_lines=raw_lines,
-                    triggers=triggers,
-                    workflow_env=workflow_env,
-                    workflow_perms=workflow_perms,
-                    job_id=str(job_id),
-                    job_data=job_data,
-                    signatures=signatures,
-                    job_output_taint=job_output_taint,
-                    job_model_output=_collect_job_output_taint(jobs, workflow_env, False, signatures),
-                )
+    if isinstance(root.get("jobs"), LineDict):
+        findings.extend(
+            _scan_jobs(
+                source=_Source(file_path, raw_lines),
+                root=root,
+                triggers=_extract_triggers(root),
+                signatures=signatures,
+                follow=_Follow(_repo_root(file_path)),
+                stack=(Path(os.path.normpath(file_path)),),
             )
+        )
     else:
         # Also support GitLab CI top-level job definitions (`script:` blocks)
         findings.extend(
@@ -550,6 +857,101 @@ def scan_workflow_file(
             )
         )
 
+    findings = dedupe_findings(findings)
+    for finding in findings:
+        if finding.file_path != file_path:
+            finding.extra["base_message"] = finding.message
+            finding.message += f" Reached from `{file_path.as_posix()}`."
+    return findings
+
+
+def dedupe_findings(findings: list[Finding]) -> list[Finding]:
+    """Keep the worst report of a finding that several workflows or calls reach."""
+    worst: dict[tuple[str, str, int, str | None, str], Finding] = {}
+    for finding in findings:
+        # Prompt injection has one sink per line, however many sources or callers reach it
+        message = "" if finding.rule_id == "AIA001" else finding.extra.get("base_message", finding.message)
+        key = (finding.rule_id, finding.file_path.as_posix(), finding.line, finding.tool_id, message)
+        current = worst.get(key)
+        # A real caller's trigger and checks say more than scanning a reusable workflow alone
+        reached = "base_message" in finding.extra
+        current_reached = current is not None and "base_message" in current.extra
+        if current is None or (reached and not current_reached):
+            worst[key] = finding
+        elif reached == current_reached and finding.severity.rank > current.severity.rank:
+            worst[key] = finding
+    return list(worst.values())
+
+
+def _scan_jobs(
+    *,
+    source: _Source,
+    root: LineDict,
+    triggers: set[str],
+    signatures: list[ActionSignature],
+    follow: _Follow,
+    stack: tuple[Path, ...],
+    inherited_perms: Any = None,
+    inherited_ifs: tuple[str, ...] = (),
+    inputs: Mapping[str, list[str]] | None = None,
+    model_inputs: Mapping[str, list[str]] | None = None,
+) -> list[Finding]:
+    """Scan a workflow's jobs. A reusable workflow gets its caller's triggers, gates, and token."""
+    findings: list[Finding] = []
+    jobs = root["jobs"]
+    workflow_env = root.get("env") if isinstance(root.get("env"), Mapping) else None
+    workflow_perms = root.get("permissions", inherited_perms)
+    subject_fields_empty = bool(triggers) and triggers <= NO_SUBJECT_TRIGGERS
+    job_output_taint = _collect_job_output_taint(
+        jobs, workflow_env, subject_fields_empty, seed=inputs, follow=follow, stack=stack
+    )
+    job_model_output = _collect_job_output_taint(
+        jobs, workflow_env, False, signatures, seed=model_inputs, follow=follow, stack=stack
+    )
+
+    for job_id, job_data in jobs.items():
+        if not isinstance(job_data, LineDict):
+            continue
+        called = follow.workflow(str(job_data.get("uses") or "").strip(), stack)
+        conditions = (*inherited_ifs, *_needed_conditions(jobs, job_id))
+        if called is None:
+            findings.extend(
+                _scan_github_job(
+                    file_path=source.path,
+                    raw_lines=source.lines,
+                    triggers=triggers,
+                    workflow_env=workflow_env,
+                    workflow_perms=workflow_perms,
+                    job_id=str(job_id),
+                    job_data=job_data,
+                    signatures=signatures,
+                    job_output_taint=job_output_taint,
+                    job_model_output=job_model_output,
+                    follow=follow,
+                    stack=stack,
+                    inherited_ifs=conditions,
+                )
+            )
+            continue
+
+        called_source, called_root = called
+        passed = _call_inputs(_workflow_call(called_root).get("inputs"), job_data.get("with"))
+        caller = TaintState(refs=dict(job_output_taint), subject_fields_empty=subject_fields_empty)
+        model_caller = TaintState(refs=dict(job_model_output), agent_only=True)
+        findings.extend(
+            _scan_jobs(
+                source=called_source,
+                root=called_root,
+                triggers=triggers,
+                signatures=signatures,
+                follow=follow,
+                stack=(*stack, called_source.path),
+                inherited_perms=job_data.get("permissions", workflow_perms),
+                inherited_ifs=(*conditions, str(job_data.get("if") or "")),
+                inputs=caller.input_refs(passed),
+                model_inputs=model_caller.input_refs(passed),
+            )
+        )
     return findings
 
 
@@ -565,8 +967,12 @@ def _scan_github_job(
     signatures: list[ActionSignature],
     job_output_taint: Mapping[str, list[str]],
     job_model_output: Mapping[str, list[str]],
+    follow: _Follow | None = None,
+    stack: tuple[Path, ...] = (),
+    inherited_ifs: tuple[str, ...] = (),
 ) -> list[Finding]:
     findings: list[Finding] = []
+    job_source = _Source(file_path, raw_lines)
     job_env = job_data.get("env") if isinstance(job_data.get("env"), Mapping) else None
     taint_state = TaintState(
         env=collect_tainted_env_map(workflow_env, job_env, tainted_refs=job_output_taint),
@@ -585,13 +991,15 @@ def _scan_github_job(
     agent_holds_token = False
     agent_unsandboxed = False
     model_state = TaintState(refs=dict(job_model_output), agent_only=True)
-    job_fully_guarded = _guard_strength(job_if) == "full"
+    job_fully_guarded = _guard_strength(*inherited_ifs, job_if) == "full"
     output_risk = bool(triggers & OUTPUT_RISK_TRIGGERS) or not triggers
     first_ai_step_line = job_data.__line__
+    first_ai_source = job_source
     first_ai_tool_id: str | None = None
     has_egress_firewall = "firewall" in runs_on.lower()
     has_untrusted_pr_checkout = False
     untrusted_checkout_line = job_data.__line__
+    untrusted_checkout_source = job_source
     unsafe_pr_checkout = False
 
     # Check job-level `if:` for spoofable [bot] condition (AIA003)
@@ -614,9 +1022,13 @@ def _scan_github_job(
             )
         )
 
-    for idx, step in enumerate(steps):
-        if not isinstance(step, LineDict):
-            continue
+    gate_step_ids: set[str] = set()
+    past_hard_gate = False
+    agent_outside_gate = False
+    states = (taint_state, model_state)
+    for idx, step, source, call_conditions in _walk_steps(steps, job_source, states, follow, stack):
+        # Steps inside a local action report against that action's file
+        file_path, raw_lines = source.path, source.lines
         step_name = str(step.get("name") or f"step #{idx + 1}")
         step_env = step.get("env") if isinstance(step.get("env"), Mapping) else None
         step_if = str(step.get("if") or "")
@@ -635,6 +1047,7 @@ def _scan_github_job(
             if PR_HEAD_CHECKOUT_RE.search(ref_val):
                 has_untrusted_pr_checkout = True
                 untrusted_checkout_line = with_block.get_key_line("ref", step.__line__)
+                untrusted_checkout_source = source
                 # Current checkout releases refuse fork PR code here, unless told otherwise
                 opted_in = str(with_block.get("allow-unsafe-pr-checkout") or "").strip().lower() == "true"
                 pinned = re.search(r"@[0-9a-f]{40}\b", uses_val.lower())
@@ -662,13 +1075,15 @@ def _scan_github_job(
             )
 
         tainted_env = taint_state.scoped(step_env)
-        guard = _guard_strength(job_if, step_if)
-        fetch_guarded = guard is not None
+        behind_gate = past_hard_gate or _references_step(gate_step_ids, step_if, *call_conditions)
+        guard = "full" if behind_gate else _guard_strength(*inherited_ifs, job_if, *call_conditions, step_if)
+        # A partial guard limits the damage, but its open path can still feed the agent
+        fetch_guarded = guard == "full"
         limited_impact = (
-            fetch_guarded
+            guard is not None
             or _has_cleared_token(step_env)
             or _is_read_only_token(job_perms)
-            or (triggers and triggers <= CALLER_GATED_TRIGGERS)
+            or (triggers and triggers <= LIMITED_REACH_TRIGGERS)
         )
         taint_severity = Severity.MEDIUM if guard == "full" else (Severity.HIGH if limited_impact else None)
 
@@ -697,6 +1112,7 @@ def _scan_github_job(
             has_untrusted_pr_checkout = True
             unsafe_pr_checkout = True
             untrusted_checkout_line = step.get_key_line("run", step.__line__)
+            untrusted_checkout_source = source
 
         # Check `uses:` against AI Action signatures
         if uses_val:
@@ -705,7 +1121,9 @@ def _scan_github_job(
                 if not has_ai_step:
                     has_ai_step = True
                     first_ai_step_line = step.get_key_line("uses", step.__line__)
+                    first_ai_source = source
                     first_ai_tool_id = sig.id
+                agent_outside_gate = agent_outside_gate or not behind_gate
                 agent_holds_token = agent_holds_token or not _has_cleared_token(step_env)
                 read_only_sandbox = str(with_block.get("sandbox") or "").strip().lower() == "read-only"
                 agent_unsandboxed = agent_unsandboxed or not read_only_sandbox
@@ -760,7 +1178,7 @@ def _scan_github_job(
                                 tool_id=sig.id,
                                 snippet=_get_snippet(raw_lines, env_line),
                                 message=(
-                                    f"Untrusted input ({', '.join(env_sources)}) is exposed to {sig.name} "
+                                    f"Untrusted input ({_describe_sources(env_sources)}) is exposed to {sig.name} "
                                     f"through `env.{env_key}` (PromptPwnd indirect prompt injection)."
                                 ),
                                 severity=taint_severity,
@@ -800,7 +1218,9 @@ def _scan_github_job(
                 if not has_ai_step:
                     has_ai_step = True
                     first_ai_step_line = run_line
+                    first_ai_source = source
                     first_ai_tool_id = cli_sigs[0].id
+                agent_outside_gate = agent_outside_gate or not behind_gate
                 agent_holds_token = agent_holds_token or not _has_cleared_token(step_env)
                 agent_unsandboxed = True
                 model_state.agent_steps.update({str(step["id"]).lower()} if step.get("id") else set())
@@ -820,7 +1240,7 @@ def _scan_github_job(
                                 tool_id=cli_sig.id,
                                 snippet=_get_snippet(raw_lines, run_line),
                                 message=(
-                                    f"Untrusted input ({', '.join(taint_sources)}) flows into "
+                                    f"Untrusted input ({_describe_sources(taint_sources)}) flows into "
                                     f"{cli_sig.name} CLI invocation in `run:` block (PromptPwnd risk)."
                                 ),
                                 severity=taint_severity,
@@ -872,7 +1292,13 @@ def _scan_github_job(
                             )
 
             # AIA011: Job pushes to the default branch after an agent ran
-            if has_ai_step and output_risk and not job_fully_guarded and DEFAULT_BRANCH_PUSH_RE.search(run_val):
+            if (
+                has_ai_step
+                and output_risk
+                and not job_fully_guarded
+                and not behind_gate
+                and DEFAULT_BRANCH_PUSH_RE.search(run_val)
+            ):
                 findings.append(
                     _make_finding(
                         rule_id="AIA011",
@@ -909,6 +1335,13 @@ def _scan_github_job(
         _absorb_step(taint_state, step)
         _absorb_step(model_state, step)
 
+        if _checks_permission(step):
+            gate_step_ids.update({str(step["id"]).lower()} if step.get("id") else set())
+            past_hard_gate = past_hard_gate or _fails_on_permission(step)
+
+    file_path, raw_lines = job_source.path, job_source.lines
+    job_fully_guarded = job_fully_guarded or (has_ai_step and not agent_outside_gate)
+
     # Job-level checks that apply only if the job runs at least one AI agent step
     if has_ai_step:
         externally_reachable = bool(triggers & UNTRUSTED_TRIGGERS) or not triggers
@@ -940,13 +1373,13 @@ def _scan_github_job(
             findings.append(
                 _make_finding(
                     rule_id="AIA006",
-                    file_path=file_path,
+                    file_path=first_ai_source.path,
                     line=first_ai_step_line,
                     col=job_data.__col__,
                     job_id=job_id,
                     step_name=None,
                     tool_id=first_ai_tool_id,
-                    snippet=_get_snippet(raw_lines, first_ai_step_line),
+                    snippet=_get_snippet(first_ai_source.lines, first_ai_step_line),
                     message=(
                         f"AI job '{job_id}' executes an autonomous agent without an outbound network "
                         "egress firewall (`step-security/harden-runner` or firewall runner)."
@@ -959,13 +1392,13 @@ def _scan_github_job(
             findings.append(
                 _make_finding(
                     rule_id="AIA008",
-                    file_path=file_path,
+                    file_path=untrusted_checkout_source.path,
                     line=untrusted_checkout_line,
                     col=1,
                     job_id=job_id,
                     step_name=None,
                     tool_id=first_ai_tool_id,
-                    snippet=_get_snippet(raw_lines, untrusted_checkout_line),
+                    snippet=_get_snippet(untrusted_checkout_source.lines, untrusted_checkout_line),
                     message=(
                         f"Job '{job_id}' is triggered by `pull_request_target`, checks out untrusted "
                         "PR head code, and runs an AI coding agent—allowing malicious repo files/hooks "
@@ -1104,7 +1537,7 @@ def _check_action_with_inputs(
                         tool_id=sig.id,
                         snippet=_get_snippet(raw_lines, key_line),
                         message=(
-                            f"Untrusted input ({', '.join(taint_sources)}) is interpolated into "
+                            f"Untrusted input ({_describe_sources(taint_sources)}) is interpolated into "
                             f"`with.{key_str}` of {sig.name} (PromptPwnd indirect prompt injection)."
                         ),
                         severity=taint_severity,
@@ -1130,8 +1563,12 @@ def _check_action_with_inputs(
                         snippet=_get_snippet(raw_lines, key_line),
                         message=(
                             f"Insecure configuration `with.{key_str}: {val_str}` in {sig.name} "
-                            "lets any GitHub user trigger the AI agent. Confirm this is deliberate and "
-                            "that the agent has no shell, write, or secret access."
+                            + (
+                                "lets any GitHub user trigger the AI agent. Confirm this is deliberate and "
+                                "that the agent has no shell, write, or secret access."
+                                if rule_id == "AIA003"
+                                else "removes a safety limit on the AI agent."
+                            )
                         ),
                         severity=access_severity if rule_id == "AIA003" else None,
                     )
@@ -1242,7 +1679,7 @@ def _scan_gitlab_jobs(
                         tool_id=cli_sig.id,
                         snippet=_get_snippet(raw_lines, script_line_num),
                         message=(
-                            f"Untrusted GitLab CI variable ({', '.join(taint_sources)}) flows into "
+                            f"Untrusted GitLab CI variable ({_describe_sources(taint_sources)}) flows into "
                             f"{cli_sig.name} CLI invocation in job '{job_name}' (PromptPwnd risk)."
                         ),
                     )

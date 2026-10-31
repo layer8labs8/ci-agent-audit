@@ -18,7 +18,7 @@ from ci_agent_audit.formatters import (
     format_text,
 )
 from ci_agent_audit.models import Finding, Severity
-from ci_agent_audit.rules import RULES_CATALOG, scan_workflow_file
+from ci_agent_audit.rules import RULES_CATALOG, dedupe_findings, scan_workflow_file
 from ci_agent_audit.signatures_loader import SignatureValidationError, load_signatures
 from ci_agent_audit.suppress import DEFAULT_CONFIG, ConfigError, filter_findings, load_config
 
@@ -225,25 +225,23 @@ def main(argv: Sequence[str] | None = None) -> int:
                 print(f"Error: {exc}", file=sys.stderr)
                 return 2
 
-        all_findings: list[Finding] = []
+        scanned: list[Finding] = []
         unreadable: list[Path] = []
-        suppressed = 0
         for wf in files:
             try:
-                file_findings = scan_workflow_file(wf, signatures=signatures)
+                scanned.extend(scan_workflow_file(wf, signatures=signatures))
             except (yaml.YAMLError, UnicodeDecodeError, OSError) as exc:
                 unreadable.append(wf)
                 print(f"Error: Could not scan {wf.as_posix()}: {exc}", file=sys.stderr)
-                continue
-            if not args.no_ignore:
-                lines = wf.read_text(encoding="utf-8").splitlines()
-                file_findings, count = filter_findings(file_findings, entries, lines)
-                suppressed += count
-            for f in file_findings:
-                if f.rule_id.upper() in ignored:
-                    continue
-                if f.severity.rank >= min_sev.rank:
-                    all_findings.append(f)
+
+        # A reusable workflow is also reached from every workflow that calls it
+        scanned = dedupe_findings(scanned)
+        suppressed = 0
+        if not args.no_ignore:
+            scanned, suppressed = filter_findings(scanned, entries)
+        all_findings = [
+            f for f in scanned if f.rule_id.upper() not in ignored and f.severity.rank >= min_sev.rank
+        ]
 
         if args.format == "json":
             output_text = format_json(all_findings)

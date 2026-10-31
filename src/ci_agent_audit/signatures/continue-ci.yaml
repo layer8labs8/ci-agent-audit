@@ -3,11 +3,12 @@ name: Continue.dev Headless CI Agent
 vendor: Continue
 description: Continue CLI (`cn`) and GitHub Action for headless coding agent checks and automated PR fixes in CI.
 action_prefixes:
-  - continuedev/continue-action
-  - continuedev/continue-ci
+  - continuedev/continue
 cli_binaries:
   - cn
   - continue-cli
+cli_packages:
+  - "@continuedev/cli"
 prompt_inputs:
   - prompt
   - instructions

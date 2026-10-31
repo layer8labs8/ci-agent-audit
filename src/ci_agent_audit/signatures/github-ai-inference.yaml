@@ -9,7 +9,9 @@ cli_binaries:
 prompt_inputs:
   - prompt
   - system-prompt
+  - system-prompt-file
   - prompt-file
+  - input
 cli_prompt_flags:
   - --prompt
 dangerous_inputs: {}

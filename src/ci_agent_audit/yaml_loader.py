@@ -39,7 +39,8 @@ class LineList(list):
         self.__col__: int = 1
 
 
-class _LinePreservingSafeLoader(yaml.SafeLoader):
+# The C parser is far faster where PyYAML was built with it, and reports the same marks
+class _LinePreservingSafeLoader(getattr(yaml, "CSafeLoader", yaml.SafeLoader)):
     """YAML SafeLoader that attaches 1-based line/column metadata to mappings and sequences."""
 
 

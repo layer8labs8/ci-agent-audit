@@ -4,13 +4,13 @@ vendor: OpenAI
 description: OpenAI Codex terminal coding agent for CI/CD automation and pull request handling.
 action_prefixes:
   - openai/codex-action
-  - openai/codex-github-action
 cli_binaries:
   - codex
 cli_packages:
   - "@openai/codex"
 prompt_inputs:
   - prompt
+  - prompt-file
   - instructions
   - task
 cli_prompt_flags:
@@ -21,7 +21,13 @@ dangerous_inputs:
   approval_policy: "never"
   full_auto: "true"
   allow-users: "*"
+  sandbox: "danger-full-access"
+  safety-strategy: "unsafe"
 dangerous_arg_patterns:
+  - pattern: "--dangerously-bypass-approvals-and-sandbox"
+    reason: "Disables both approval prompts and sandboxing in OpenAI Codex CLI."
+  - pattern: "--sandbox[=\\s]+danger-full-access"
+    reason: "Runs Codex CLI commands with no filesystem or network sandbox."
   - pattern: "--dangerously-auto-approve-everything"
     reason: "Disables both approval prompts and sandboxing in OpenAI Codex CLI."
   - pattern: "--full-auto"

@@ -108,15 +108,14 @@ def is_inline_ignored(finding: Finding, lines: list[str]) -> bool:
     )
 
 
-def filter_findings(
-    findings: list[Finding],
-    entries: list[IgnoreEntry],
-    lines: list[str],
-) -> tuple[list[Finding], int]:
+def filter_findings(findings: list[Finding], entries: list[IgnoreEntry]) -> tuple[list[Finding], int]:
     """Return findings still reported, plus how many were ignored."""
-    kept = [
-        finding
-        for finding in findings
-        if not is_inline_ignored(finding, lines) and not any(entry.matches(finding) for entry in entries)
-    ]
+    lines: dict[Path, list[str]] = {}
+    kept: list[Finding] = []
+    for finding in findings:
+        path = finding.file_path
+        if path not in lines:
+            lines[path] = path.read_text(encoding="utf-8").splitlines()
+        if not is_inline_ignored(finding, lines[path]) and not any(entry.matches(finding) for entry in entries):
+            kept.append(finding)
     return kept, len(findings) - len(kept)

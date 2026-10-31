@@ -20,7 +20,9 @@ dangerous_inputs: {}
 dangerous_arg_patterns:
   - pattern: "--yolo"
     reason: "Enables unrestricted auto-approval of all tool calls and shell commands in Gemini CLI."
-  - pattern: "--approval-mode\\s+auto_edit"
+  - pattern: "--approval-mode[=\\s]+yolo"
+    reason: "Enables unrestricted auto-approval of all tool calls and shell commands in Gemini CLI."
+  - pattern: "--approval-mode[=\\s]+auto_edit"
     reason: "Automatically approves file edits without verification."
   - pattern: "--sandbox=false"
     reason: "Explicitly disables sandboxing for Gemini CLI tool execution."

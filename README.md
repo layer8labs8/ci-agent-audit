@@ -22,7 +22,7 @@
 
 | Follows the data | Knows your protection | Fixes the easy parts |
 | :--- | :--- | :--- |
-| Tracks outside text through variables, step outputs, and files until it reaches the agent. | Read-only tokens and author checks lower the severity, so the worst problems come first. | `--fix` handles common mistakes, and every finding tells you what to change. |
+| Tracks outside text through variables, step outputs, files, local actions, and reusable workflows until it reaches the agent. | Read-only tokens and author checks lower the severity, so the worst problems come first. | `--fix` handles common mistakes, and every finding tells you what to change. |
 
 **[Paste a workflow into the browser scanner](https://layer8labs8.github.io/ci-agent-audit/)** to see it work. There's nothing to install, and your file stays on your machine.
 
@@ -110,6 +110,10 @@ The scan ends with a summary:
 
 Run `ci-agent-audit explain AIA001` for the full details of any rule, or `ci-agent-audit rules` for the list.
 
+### It follows your local actions
+
+An agent is often hidden one step away, inside `./.github/actions/triage` or a reusable workflow. The scan follows those local calls, carries untrusted text through `with:` inputs and outputs, and judges them with the real trigger, checks, and token of the workflow that made the call. The finding points at the file that holds the problem and says which workflow reached it.
+
 ### How severity works
 
 | Severity | What it means | What to do |
@@ -119,13 +123,28 @@ Run `ci-agent-audit explain AIA001` for the full details of any rule, or `ci-age
 | **Medium** | A real weakness, or a risk behind a strong guard. | Plan a fix. |
 | **Low** | Good hygiene. | Fix when convenient. |
 
-Protection you already have lowers the severity. For example, prompt injection drops from Critical to High when the token is read-only, and to Medium when a complete check such as `author_association` limits who can start the job.
+Protection you already have lowers the severity. For example, prompt injection drops from Critical to High when the token is read-only or the workflow only runs on `pull_request`, where forks get no secrets. It drops to Medium when a complete check such as `author_association` limits who can start the job.
 
 ## Supported tools
 
-Claude Code Action, Claude Code Security Review, Gemini CLI, OpenAI Codex, GitHub AI Inference, OpenHands, PR-Agent, CodeRabbit, Continue, Aider, Goose, and SWE-agent.
+| Tool | Detected as | Tried on real workflows |
+| :--- | :--- | :--- |
+| Claude Code | Action and command | Yes |
+| Gemini CLI | Action and command | Yes |
+| OpenAI Codex | Action and command | Yes |
+| Goose | Command | A little |
+| Aider | Command | A little |
+| Claude Code Security Review | Action | Not yet |
+| GitHub AI Inference | Action | Not yet |
+| CodeRabbit | Action and command | Not yet |
+| Continue | Action and command | Not yet |
+| OpenHands | Action and command | Not yet |
+| PR-Agent | Action and command | Not yet |
+| SWE-agent | Command | Not yet |
 
-It detects them as actions and as command-line tools, including wrapped forms such as `timeout 60 claude` and `npx @anthropic-ai/claude-code`. GitLab CI support covers prompt injection and dangerous flags in `script:` blocks. The other rules are GitHub Actions only.
+One scan checks for all of them, because it only reads your YAML and never starts an agent. Every tool goes through the same automated detection tests. The last column says how much real-world use backs that up, so reports for the newer ones are especially welcome.
+
+Commands are also found in wrapped forms such as `timeout 60 claude` and `npx @anthropic-ai/claude-code`. GitLab CI support covers prompt injection, dangerous flags, and unpinned MCP servers in `script:` blocks. The other rules are GitHub Actions only.
 
 ## Fix common problems automatically
 
@@ -159,7 +178,7 @@ ignore:
     reason: Public triage is deliberate, and the agent has no shell access.
 ```
 
-The scan always says how many findings were ignored. Pull requests can add these ignores too, so review them like code. Use `--no-ignore` to see everything.
+Put the comment in the file the finding points at, which can be a local action. The scan always says how many findings were ignored. Pull requests can add these ignores too, so review them like code. Use `--no-ignore` to see everything.
 
 ## Use it in CI
 
@@ -178,7 +197,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: layer8labs8/ci-agent-audit@v0.1.2
+      - uses: layer8labs8/ci-agent-audit@v0.1.3
         with:
           paths: .github/workflows
           fail-on: high
@@ -196,7 +215,7 @@ To run it as a [pre-commit](https://pre-commit.com) hook instead:
 ```yaml
 repos:
   - repo: https://github.com/layer8labs8/ci-agent-audit
-    rev: v0.1.2
+    rev: v0.1.3
     hooks:
       - id: ci-agent-audit
 ```
@@ -217,6 +236,23 @@ repos:
 
 Exit codes: `0` means nothing reached the `--fail-on` level, `1` means something did, and `2` means the scan itself failed, for example on invalid YAML or an empty folder.
 
+## How accurate is it?
+
+Every change runs against [`benchmark/cases.yml`](https://github.com/layer8labs8/ci-agent-audit/blob/main/benchmark/cases.yml), 86 small repositories labelled with what must fire and what must stay quiet.
+
+| Cases | Number | Findings caught | Missed | False alarms |
+| :--- | ---: | ---: | ---: | ---: |
+| Direct risks | 33 | 33 | 0 | 0 |
+| Local composite actions | 10 | 10 | 0 | 0 |
+| Reusable workflows | 8 | 8 | 0 | 0 |
+| Guard and data-flow traps | 6 | 8 | 0 | 0 |
+| Safe setups | 25 | 10 | 0 | 0 |
+| Known gaps | 4 | 0 | 4 | 0 |
+
+That's 94.5% recall and 100% precision on these cases. We wrote them ourselves, so treat this as a regression check and not a promise about your repository. The four misses are real gaps: remote reusable workflows, agents inside custom scripts or `docker run`, and tools with no signature yet.
+
+Engine changes are also compared on the CI files of 135 public repositories that use AI agents. Following local files raised the repositories with a finding from 83 to 95, with no crashes, and the scan ran about a third faster. Those findings are risky patterns, not proven attacks.
+
 ## How it fits with other tools
 
 Run it next to a general workflow linter, not instead of one.
@@ -233,11 +269,13 @@ Other projects in this area include [ARKEXA](https://github.com/alokgorithm/ARKE
 
 A scanner finds risky patterns, not proven attacks. A clean report does not mean a workflow is safe, and a finding does not prove it can be exploited.
 
-- It reads one file at a time, so it can't see checks in a calling workflow, or follow reusable workflows and composite actions.
+- It follows composite actions and reusable workflows in the same repository, but it never downloads remote ones. Anything behind `uses: owner/repo/...` stays out of sight, except for known AI actions.
+- A reusable workflow that only other repositories call is scanned alone, so it can't see their triggers or checks.
+- Local calls are only followed for files in `.github/workflows`. A file scanned from anywhere else is read alone.
 - It doesn't follow data through artifacts, caches, or custom scripts.
 - It can't detect agents that read issues through their own built-in tools when the workflow doesn't mention them.
 - It flags untrusted data anywhere in a `run:` block that starts an agent, even if the agent never reads that data.
-- It reads guards from `if:` text, including fixed label checks. An `if:` with `||` only counts as partial protection, because the scan can't tell which paths it covers.
+- It reads guards from `if:` text, jobs listed in `needs:`, and common permission-check steps. An `if:` with `||` only counts as complete when every path has a check. A check it doesn't recognize doesn't count.
 - It takes `sandbox: read-only` as written and doesn't verify what the sandbox enforces.
 
 ## Contributing

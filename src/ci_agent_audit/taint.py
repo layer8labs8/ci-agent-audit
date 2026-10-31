@@ -11,16 +11,24 @@ UNTRUSTED_GITHUB_CONTEXT_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"github\.event\.issue\.(?:title|body)", re.IGNORECASE),
     re.compile(r"github\.event\.pull_request\.(?:title|body)", re.IGNORECASE),
     re.compile(r"github\.event\.pull_request\.head\.(?:ref|label)", re.IGNORECASE),
+    re.compile(r"github\.event\.pull_request\.head\.repo\.(?:default_branch|description|homepage)", re.IGNORECASE),
     re.compile(r"github\.event\.comment\.body", re.IGNORECASE),
     re.compile(r"github\.event\.review\.body", re.IGNORECASE),
     re.compile(r"github\.event\.review_comment\.body", re.IGNORECASE),
     re.compile(r"github\.event\.discussion\.(?:title|body)", re.IGNORECASE),
     re.compile(r"github\.event\.discussion_comment\.body", re.IGNORECASE),
-    re.compile(r"github\.event\.commits(?:\[.*?\]|\.\*)\.(?:message|author\.name)", re.IGNORECASE),
-    re.compile(r"github\.event\.head_commit\.(?:message|author\.name)", re.IGNORECASE),
+    re.compile(
+        r"github\.event\.commits(?:\[.*?\]|\.\*)\.(?:message|(?:author|committer)\.(?:name|email))", re.IGNORECASE
+    ),
+    re.compile(r"github\.event\.head_commit\.(?:message|(?:author|committer)\.(?:name|email))", re.IGNORECASE),
     re.compile(r"github\.event\.pages(?:\[.*?\]|\.\*)\.page_name", re.IGNORECASE),
     re.compile(r"github\.event\.client_payload(?:\.[\w.-]+)?", re.IGNORECASE),
-    re.compile(r"github\.event\.workflow_run\.(?:head_branch|display_title|head_commit\.message)", re.IGNORECASE),
+    re.compile(
+        r"github\.event\.workflow_run\.(?:head_branch|display_title|head_repository\.description|"
+        r"head_commit\.(?:message|(?:author|committer)\.(?:name|email)))",
+        re.IGNORECASE,
+    ),
+    re.compile(r"github\.event\.workflow_run\.pull_requests(?:\[.*?\]|\.\*)\.head\.ref", re.IGNORECASE),
     re.compile(r"github\.head_ref", re.IGNORECASE),
 )
 
@@ -57,7 +65,8 @@ UNTRUSTED_GITLAB_VAR_PATTERNS: tuple[re.Pattern[str], ...] = (
 )
 
 GHA_EXPRESSION_RE = re.compile(r"\$\{\{(.*?)\}\}", re.DOTALL)
-OUTPUT_REF_RE = re.compile(r"\b(?:steps|needs)\.[\w-]+\.outputs\.[\w-]+", re.IGNORECASE)
+OUTPUT_REF_RE = re.compile(r"\b(?:steps|needs|jobs)\.[\w-]+\.outputs\.[\w-]+|(?<![\w.-])inputs\.[\w-]+", re.IGNORECASE)
+INDEX_RE = re.compile(r"\[\s*['\"]([\w-]+)['\"]\s*\]")
 SHELL_ASSIGN_RE = re.compile(r"^\s*(?:export\s+)?([A-Za-z_]\w*)=")
 REDIRECT_RE = re.compile(r">>\s*[\"']?\$\{?GITHUB_(ENV|OUTPUT)\}?[\"']?")
 GROUP_REDIRECT_RE = re.compile(r"^\s*\}\s*>>\s*[\"']?\$\{?GITHUB_(ENV|OUTPUT)\}?[\"']?")
@@ -67,12 +76,42 @@ SET_OUTPUT_RE = re.compile(r"core\.setOutput\(\s*['\"]([\w-]+)['\"]\s*,\s*([^\n]
 STEP_OUTPUT_RE = re.compile(r"\bsteps\.([\w-]+)\.outputs\.([\w-]+)", re.IGNORECASE)
 FILE_HEREDOC_RE = re.compile(r"^\s*cat\s+<<-?\s*[\"']?(\w+)[\"']?\s*>\s*[\"']?([^\s\"'>]+)")
 USER_TEXT_FIELD_RE = re.compile(r"\b(?:body|title|comments)\b")
+JQ_FILTER_RE = re.compile(r"(?:\bjq|--jq)\s+(?:-{1,2}[\w-]+\s+)*(?:'([^']*)'|\"([^\"]*)\"|(\.\S*))")
+JQ_PATH_RE = re.compile(r"\.[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*")
+JQ_SUBSHELL_RE = re.compile(r"\$\([^()]*\bjq\b[^()]*\)")
+# Values GitHub generates or restricts, which can't carry instructions
+SAFE_JQ_FIELDS = {
+    "baseRefName",
+    "conclusion",
+    "databaseId",
+    "draft",
+    "headRefOid",
+    "id",
+    "isDraft",
+    "login",
+    "merged",
+    "mergeable",
+    "node_id",
+    "number",
+    "oid",
+    "permission",
+    "sha",
+    "state",
+    "status",
+    "total_count",
+}
 EXPORT_LINE_RE = re.compile(r"(?:echo|printf)\s+(?:-\S+\s+)*[\"']?([A-Za-z_][\w-]*)(=|<<)([\"']?)(\w*)")
 
 
 def find_direct_untrusted_sources(value: str) -> list[str]:
     """Return all untrusted GitHub/GitLab expressions directly referenced in `value`."""
     if not value or not isinstance(value, str):
+        return []
+
+    # `github.event['issue']['body']` means the same as `github.event.issue.body`
+    value = INDEX_RE.sub(r".\1", value)
+    lowered = value.lower()
+    if "github." not in lowered and "ci_" not in lowered:
         return []
 
     matches: list[str] = []
@@ -139,7 +178,7 @@ def _ref_sources(value: str, tainted_refs: Mapping[str, list[str]] | None) -> li
     if not tainted_refs:
         return []
     sources: list[str] = []
-    for ref in OUTPUT_REF_RE.findall(value):
+    for ref in OUTPUT_REF_RE.findall(INDEX_RE.sub(r".\1", value)):
         for src in tainted_refs.get(ref.lower(), []):
             label = f"{src} (via {ref})"
             if label not in sources:
@@ -149,6 +188,8 @@ def _ref_sources(value: str, tainted_refs: Mapping[str, list[str]] | None) -> li
 
 def references_env_var(text: str, env_name: str) -> bool:
     """Return True if `text` references `env_name` via `$VAR`, `${VAR}`, or `${{ env.VAR }}`."""
+    if env_name not in text:
+        return False
     escaped = re.escape(env_name)
     patterns = (
         rf"\$\{{\{{\s*env\.{escaped}\b.*?\}}\}}",
@@ -182,6 +223,25 @@ def find_all_taint_sources(
         if label not in sources:
             sources.append(label)
     return sources
+
+
+def _selects_safe_fields(line: str) -> bool:
+    """Return True if a `jq` filter on this line keeps only fields that can't carry instructions."""
+    match = JQ_FILTER_RE.search(line)
+    if match is None:
+        return False
+    jq_filter = next(group for group in match.groups() if group is not None)
+    # `select()` passes whole objects through, and an escaped quote hides the rest of the filter
+    if "select(" in jq_filter or "\\" in jq_filter:
+        return False
+    paths = JQ_PATH_RE.findall(jq_filter)
+    return bool(paths) and all(path.rsplit(".", 1)[-1] in SAFE_JQ_FIELDS for path in paths)
+
+
+def _without_safe_fields(line: str) -> str:
+    """Remove `jq` calls that keep only safe fields, leaving the rest of the line to be judged."""
+    kept = JQ_SUBSHELL_RE.sub(lambda call: "" if _selects_safe_fields(call.group(0)) else call.group(0), line)
+    return "" if "$(" not in kept and _selects_safe_fields(kept) else kept
 
 
 def _reads_untrusted_text(line: str) -> str | None:
@@ -245,12 +305,43 @@ class TaintState:
     def sources(self, value: str, tainted_env: Mapping[str, list[str]]) -> list[str]:
         found = find_all_taint_sources(value, tainted_env, self.refs, include_events=not self.agent_only)
         for name, file_sources in self.files.items():
-            if re.search(rf"(?<![\w.-]){re.escape(name)}(?![\w-])", value):
+            if name in value and re.search(rf"(?<![\w.-]){re.escape(name)}(?![\w-])", value):
                 found.extend(f"{src} (via file {name})" for src in file_sources)
         found.extend(self._agent_sources(value))
         if self.subject_fields_empty:
             found = [src for src in found if not SUBJECT_EVENT_FIELD_RE.match(src)]
         return found
+
+    def input_refs(
+        self, inputs: Mapping[str, object], tainted_env: Mapping[str, list[str]] | None = None
+    ) -> dict[str, list[str]]:
+        """Map the `inputs.*` references a call receives to the untrusted data in them."""
+        refs: dict[str, list[str]] = {}
+        for name, value in inputs.items():
+            sources = self.sources(str(value or ""), tainted_env or {})
+            if sources:
+                refs[f"inputs.{name}".lower()] = sources
+        return refs
+
+    def enter_call(self, inputs: Mapping[str, object], step_env: Mapping[str, object] | None) -> tuple:
+        """Move into a local action, which has its own `inputs` and `steps`."""
+        outer = (self.env, self.refs, self.agent_steps)
+        env = self.scoped(step_env)
+        entered = dict(env)
+        refs = {key: value for key, value in self.refs.items() if key.startswith("needs.")}
+        refs.update(self.input_refs(inputs, env))
+        self.env, self.refs, self.agent_steps = env, refs, set()
+        return (*outer, entered)
+
+    def leave_call(self, outer: tuple, step_id: str, outputs: Mapping[str, object]) -> None:
+        """Return from a local action, keeping its outputs and what it exported to the job."""
+        env, refs, agent_steps, entered = outer
+        for name, value in outputs.items():
+            sources = self.sources(str(value or ""), self.env)
+            if step_id and sources:
+                refs[f"steps.{step_id}.outputs.{name}".lower()] = sources
+        env.update({key: value for key, value in self.env.items() if entered.get(key) != value})
+        self.env, self.refs, self.agent_steps = env, refs, agent_steps
 
     def absorb_github_script(self, step_id: str, script: str) -> None:
         """Record `core.setOutput` calls that pass on issue or PR text."""
@@ -278,8 +369,9 @@ class TaintState:
         file_heredoc: tuple[str, str] | None = None
 
         for idx, line in enumerate(lines):
-            sources = self.sources(line, local)
-            fetched = None if self.agent_only else _reads_untrusted_text(line)
+            visible = _without_safe_fields(line)
+            sources = self.sources(visible, local)
+            fetched = None if self.agent_only else _reads_untrusted_text(visible)
             if fetched:
                 sources = [*sources, fetched]
 

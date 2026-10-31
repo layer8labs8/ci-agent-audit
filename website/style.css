@@ -146,6 +146,12 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .tools { display: flex; flex-wrap: wrap; gap: 8px; margin: 0; padding: 0; list-style: none; }
 .tools li { padding: 6px 12px; background: var(--sheet); border: 1px solid var(--line); border-radius: 6px; font-size: 15px; }
 
+.numbers-wrap { margin-top: 18px; overflow-x: auto; }
+.numbers { width: 100%; min-width: 480px; border-collapse: collapse; font-size: 16px; }
+.numbers th, .numbers td { padding: 10px 0 10px 14px; border-bottom: 1px solid var(--line); text-align: right; font-weight: 400; font-variant-numeric: tabular-nums; }
+.numbers th:first-child { padding-left: 0; text-align: left; font-weight: 600; }
+.numbers thead th { font: 600 12px/1.4 var(--mono); letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+
 .usage { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
 .usage article { position: relative; min-width: 0; padding: 16px 18px; background: var(--code-bg); color: var(--code-ink); border-radius: 8px; }
 .usage .wide { grid-column: 1 / -1; }

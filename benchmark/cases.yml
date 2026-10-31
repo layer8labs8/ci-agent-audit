@@ -1,0 +1,1616 @@
+# Labelled cases for tools/benchmark.py. Every workflow here was written for this benchmark.
+#
+# expect: rules that must fire.
+# forbid: rules that must not fire.
+# safe: nothing may fire, except the rules in allow.
+# max_severity: nothing may be reported above this level.
+# gap: a risk the scanner can't see yet. It still counts against recall.
+
+direct:
+  - name: issue-body-in-prompt
+    expect: [AIA001]
+    files:
+      .github/workflows/ai.yml: |
+        on:
+          issues:
+            types: [opened]
+        permissions:
+          contents: read
+        jobs:
+          ai:
+            runs-on: ubuntu-latest
+            steps:
+              - uses: anthropics/claude-code-action@v1.0.100
+                with:
+                  prompt: "Triage: ${{ github.event.issue.body }}"
+
+  - name: comment-body-in-prompt
+    expect: [AIA001]
+    files:
+      .github/workflows/ai.yml: |
+        on: [issue_comment]
+        jobs:
+          ai:
+            runs-on: ubuntu-latest
+            steps:
+              - uses: google-github-actions/run-gemini-cli@v0.1.10
+                with:
+                  prompt: "Answer this: ${{ github.event.comment.body }}"
+
+  - name: pr-title-through-env-to-cli
+    expect: [AIA001]
+    files:
+      .github/workflows/ai.yml: |
+        on: [pull_request_target]
+        jobs:
+          ai:
+            runs-on: ubuntu-latest
+            steps:
+              - env:
+                  TITLE: ${{ github.event.pull_request.title }}
+                run: claude -p "Review $TITLE"
+
+  - name: env-chain-across-scopes
+    expect: [AIA001]
+    files:
+      .github/workflows/ai.yml: |
+        on: [issues]
+        env:
+          RAW: ${{ github.event.issue.title }}
+        jobs:
+          ai:
+            runs-on: ubuntu-latest
+            env:
+              TEXT: ${{ env.RAW }}
+            steps:
+              - uses: anthropics/claude-code-action@v1.0.100
+                with:
+                  prompt: "Label this: ${{ env.TEXT }}"
+
+  - name: relay-through-github-env
+    expect: [AIA001]
+    files:
+      .github/workflows/ai.yml: |
+        on: [issues]
+        jobs:
+          ai:
+            runs-on: ubuntu-latest
+            steps:
+              - env:
+                  BODY: ${{ github.event.issue.body }}
+                run: echo "TASK=$BODY" >> "$GITHUB_ENV"
+              - uses: anthropics/claude-code-action@v1.0.100
+                with:
+                  prompt: "Do this: ${{ env.TASK }}"
+
+  - name: relay-through-step-output
+    expect: [AIA001]
+    files:
+      .github/workflows/ai.yml: |
+        on: [issues]
+        jobs:
+          ai:
+            runs-on: ubuntu-latest
+            steps:
+              - id: read
+                env:
+                  BODY: ${{ github.event.issue.body }}
+                run: echo "text=$BODY" >> "$GITHUB_OUTPUT"
+              - uses: anthropics/claude-code-action@v1.0.100
+                with:
+                  prompt: "Do this: ${{ steps.read.outputs.text }}"
+
+  - name: relay-through-job-output
+    expect: [AIA001]
+    files:
+      .github/workflows/ai.yml: |
+        on: [issues]
+        jobs:
+          read:
+            runs-on: ubuntu-latest
+            outputs:
+              text: ${{ steps.grab.outputs.text }}
+            steps:
+              - id: grab
+                env:
+                  BODY: ${{ github.event.issue.body }}
+                run: echo "text=$BODY" >> "$GITHUB_OUTPUT"
+          ai:
+            needs: read
+            runs-on: ubuntu-latest
+            steps:
+              - uses: anthropics/claude-code-action@v1.0.100
+                with:
+                  prompt: "Do this: ${{ needs.read.outputs.text }}"
+
+  - name: relay-through-file
+    expect: [AIA001]
+    files:
+      .github/workflows/ai.yml: |
+        on: [issues]
+        jobs:
+          ai:
+            runs-on: ubuntu-latest
+            steps:
+              - env:
+                  BODY: ${{ github.event.issue.body }}
+                run: echo "$BODY" > prompt.txt
+              - run: claude -p "$(cat prompt.txt)"
+
+  - name: gh-output-into-prompt
+    expect: [AIA001]
+    files:
+      .github/workflows/ai.yml: |
+        on:
+          schedule:
+            - cron: "0 3 * * *"
+        jobs:
+          ai:
+            runs-on: ubuntu-latest
+            steps:
+              - id: fetch
+                run: echo "text=$(gh issue view 1 --json body -q .body)" >> "$GITHUB_OUTPUT"
+              - uses: anthropics/claude-code-action@v1.0.100
+                with:
+                  prompt: "Summarize: ${{ steps.fetch.outputs.text }}"
+
+  - name: agent-told-to-fetch-issues
+    expect: [AIA009]
+    files:
+      .github/workflows/ai.yml: |
+        on:
+          schedule:
+            - cron: "0 3 * * *"
+        jobs:
+          ai:
+            runs-on: ubuntu-latest
+            steps:
+              - uses: anthropics/claude-code-action@v1.0.100
+                with:
+                  prompt: "Run gh issue list and triage every open issue."
+
+  - name: event-payload-read-by-jq
+    expect: [AIA001]
+    files:
+      .github/workflows/ai.yml: |
+        on: [issues]
+        jobs:
+          ai:
+            runs-on: ubuntu-latest
+            steps:
+              - run: jq -r .issue.body "$GITHUB_EVENT_PATH" > body.txt
+              - run: claude -p "Triage the text in body.txt"
+
+  - name: bracket-index-expression
+    expect: [AIA001]
+    files:
+      .github/workflows/ai.yml: |
+        on: [issues]
+        jobs:
+          ai:
+            runs-on: ubuntu-latest
+            steps:
+              - uses: anthropics/claude-code-action@v1.0.100
+                with:
+                  prompt: "Triage: ${{ github.event['issue']['body'] }}"
+
+  - name: commit-author-email
+    expect: [AIA001]
+    files:
+      .github/workflows/ai.yml: |
+        on: [push]
+        jobs:
+          ai:
+            runs-on: ubuntu-latest
+            steps:
+              - uses: anthropics/claude-code-action@v1.0.100
+                with:
+                  prompt: "Thank ${{ github.event.head_commit.author.email }}"
+
+  - name: head-repo-description
+    expect: [AIA001]
+    files:
+      .github/workflows/ai.yml: |
+        on: [pull_request_target]
+        jobs:
+          ai:
+            runs-on: ubuntu-latest
+            steps:
+              - uses: anthropics/claude-code-action@v1.0.100
+                with:
+                  prompt: "This fork says: ${{ github.event.pull_request.head.repo.description }}"
+
+  - name: whole-event-tojson
+    expect: [AIA001]
+    files:
+      .github/workflows/ai.yml: |
+        on: [issues]
+        jobs:
+          ai:
+            runs-on: ubuntu-latest
+            steps:
+              - uses: anthropics/claude-code-action@v1.0.100
+                with:
+                  prompt: "Event: ${{ toJSON(github.event) }}"
+
+  - name: workflow-run-branch-name
+    expect: [AIA001]
+    files:
+      .github/workflows/ai.yml: |
+        on:
+          workflow_run:
+            workflows: [Tests]
+            types: [completed]
+        jobs:
+          ai:
+            runs-on: ubuntu-latest
+            steps:
+              - uses: anthropics/claude-code-action@v1.0.100
+                with:
+                  prompt: "Why did ${{ github.event.workflow_run.head_branch }} fail?"
+
+  - name: spoofable-bot-check
+    expect: [AIA003]
+    files:
+      .github/workflows/ai.yml: |
+        on: [issue_comment]
+        jobs:
+          ai:
+            if: endsWith(github.actor, '[bot]')
+            runs-on: ubuntu-latest
+            steps:
+              - uses: anthropics/claude-code-action@v1.0.100
+                with:
+                  prompt: "Check the build."
+
+  - name: wildcard-users
+    expect: [AIA003]
+    files:
+      .github/workflows/ai.yml: |
+        on: [issues]
+        jobs:
+          ai:
+            runs-on: ubuntu-latest
+            steps:
+              - uses: anthropics/claude-code-action@v1.0.100
+                with:
+                  prompt: "Check the build."
+                  allowed_non_write_users: "*"
+
+  - name: claude-skip-permissions
+    expect: [AIA002]
+    files:
+      .github/workflows/ai.yml: |
+        on: [issues]
+        jobs:
+          ai:
+            runs-on: ubuntu-latest
+            steps:
+              - run: claude -p "Fix the docs" --dangerously-skip-permissions
+
+  - name: gemini-yolo-approval-mode
+    expect: [AIA002]
+    files:
+      .github/workflows/ai.yml: |
+        on: [issues]
+        jobs:
+          ai:
+            runs-on: ubuntu-latest
+            steps:
+              - run: gemini -p "Fix the docs" --approval-mode=yolo
+
+  - name: codex-bypass-flag
+    expect: [AIA002]
+    files:
+      .github/workflows/ai.yml: |
+        on: [issues]
+        jobs:
+          ai:
+            runs-on: ubuntu-latest
+            steps:
+              - run: codex exec --dangerously-bypass-approvals-and-sandbox "Fix the docs"
+
+  - name: codex-action-unsafe-safety-strategy
+    expect: [AIA002]
+    files:
+      .github/workflows/ai.yml: |
+        on: [issues]
+        jobs:
+          ai:
+            runs-on: ubuntu-latest
+            steps:
+              - uses: openai/codex-action@v1.4
+                with:
+                  prompt: "Fix the docs"
+                  safety-strategy: unsafe
+
+  - name: write-all-token
+    expect: [AIA005]
+    files:
+      .github/workflows/ai.yml: |
+        on: [issues]
+        permissions: write-all
+        jobs:
+          ai:
+            runs-on: ubuntu-latest
+            steps:
+              - uses: anthropics/claude-code-action@v1.0.100
+                with:
+                  prompt: "Check the build."
+
+  - name: no-egress-firewall
+    expect: [AIA006]
+    files:
+      .github/workflows/ai.yml: |
+        on: [issue_comment]
+        permissions:
+          contents: read
+        jobs:
+          ai:
+            runs-on: ubuntu-latest
+            steps:
+              - uses: anthropics/claude-code-action@v1.0.100
+                with:
+                  prompt: "Check the build."
+
+  - name: unpinned-mcp-in-config
+    expect: [AIA007]
+    files:
+      .github/workflows/ai.yml: |
+        on: [issues]
+        jobs:
+          ai:
+            runs-on: ubuntu-latest
+            steps:
+              - uses: anthropics/claude-code-action@v1.0.100
+                with:
+                  prompt: "Check the build."
+                  mcp_config: '{"mcpServers":{"gh":{"command":"npx -y @modelcontextprotocol/server-github"}}}'
+
+  - name: pr-target-checkout-of-pr-head
+    expect: [AIA008]
+    files:
+      .github/workflows/ai.yml: |
+        on: [pull_request_target]
+        jobs:
+          ai:
+            runs-on: ubuntu-latest
+            steps:
+              - uses: actions/checkout@v7
+                with:
+                  ref: ${{ github.event.pull_request.head.sha }}
+              - uses: anthropics/claude-code-action@v1.0.100
+                with:
+                  prompt: "Review this change."
+
+  - name: output-into-run
+    expect: [AIA010]
+    files:
+      .github/workflows/ai.yml: |
+        on: [issues]
+        jobs:
+          ai:
+            runs-on: ubuntu-latest
+            steps:
+              - id: ai
+                uses: actions/ai-inference@v1.2.0
+                with:
+                  prompt: "Suggest a command."
+              - run: ${{ steps.ai.outputs.response }}
+
+  - name: output-chooses-checkout-ref
+    expect: [AIA010]
+    files:
+      .github/workflows/ai.yml: |
+        on: [issues]
+        jobs:
+          ai:
+            runs-on: ubuntu-latest
+            steps:
+              - id: ai
+                uses: actions/ai-inference@v1.2.0
+                with:
+                  prompt: "Pick a branch."
+              - uses: actions/checkout@v7
+                with:
+                  ref: ${{ steps.ai.outputs.response }}
+
+  - name: push-to-main-after-agent
+    expect: [AIA011]
+    files:
+      .github/workflows/ai.yml: |
+        on: [issues]
+        jobs:
+          ai:
+            runs-on: ubuntu-latest
+            steps:
+              - uses: anthropics/claude-code-action@v1.0.100
+                with:
+                  prompt: "Update the docs."
+              - run: git push origin HEAD:main
+
+  - name: outdated-action
+    expect: [AIA004]
+    files:
+      .github/workflows/ai.yml: |
+        on: [issues]
+        jobs:
+          ai:
+            runs-on: ubuntu-latest
+            steps:
+              - uses: anthropics/claude-code-action@v1.0.80
+                with:
+                  prompt: "Check the build."
+
+  - name: gitlab-mr-description
+    expect: [AIA001]
+    files:
+      .gitlab-ci.yml: |
+        review:
+          script:
+            - claude -p "Review: $CI_MERGE_REQUEST_DESCRIPTION"
+
+  - name: gitlab-unpinned-mcp
+    expect: [AIA007]
+    files:
+      .gitlab-ci.yml: |
+        review:
+          script:
+            - npx -y @modelcontextprotocol/server-github
+
+  - name: gitlab-skip-permissions
+    expect: [AIA002]
+    files:
+      .gitlab-ci.yml: |
+        review:
+          script:
+            - claude -p "Fix the docs" --dangerously-skip-permissions
+
+composite:
+  - name: composite-input-into-prompt
+    expect: [AIA001]
+    files:
+      .github/workflows/ai.yml: |
+        on: [issues]
+        jobs:
+          ai:
+            runs-on: ubuntu-latest
+            steps:
+              - uses: actions/checkout@v7
+              - uses: ./.github/actions/triage
+                with:
+                  text: ${{ github.event.issue.body }}
+      .github/actions/triage/action.yml: |
+        name: Triage
+        inputs:
+          text:
+            required: true
+        runs:
+          using: composite
+          steps:
+            - uses: anthropics/claude-code-action@v1.0.100
+              with:
+                prompt: "Triage: ${{ inputs.text }}"
+
+  - name: composite-input-through-env
+    expect: [AIA001]
+    files:
+      .github/workflows/ai.yml: |
+        on: [issue_comment]
+        jobs:
+          ai:
+            runs-on: ubuntu-latest
+            steps:
+              - uses: actions/checkout@v7
+              - uses: ./.github/actions/answer
+                with:
+                  question: ${{ github.event.comment.body }}
+      .github/actions/answer/action.yaml: |
+        name: Answer
+        inputs:
+          question:
+            required: true
+        runs:
+          using: composite
+          steps:
+            - shell: bash
+              env:
+                QUESTION: ${{ inputs.question }}
+              run: claude -p "Answer $QUESTION"
+
+  - name: composite-dangerous-flag
+    expect: [AIA002]
+    files:
+      .github/workflows/ai.yml: |
+        on: [issues]
+        jobs:
+          ai:
+            runs-on: ubuntu-latest
+            steps:
+              - uses: actions/checkout@v7
+              - uses: ./.github/actions/fix
+      .github/actions/fix/action.yml: |
+        name: Fix
+        runs:
+          using: composite
+          steps:
+            - shell: bash
+              run: claude -p "Fix the docs" --dangerously-skip-permissions
+
+  - name: composite-nested
+    expect: [AIA001]
+    files:
+      .github/workflows/ai.yml: |
+        on: [issues]
+        jobs:
+          ai:
+            runs-on: ubuntu-latest
+            steps:
+              - uses: actions/checkout@v7
+              - uses: ./.github/actions/outer
+                with:
+                  text: ${{ github.event.issue.title }}
+      .github/actions/outer/action.yml: |
+        name: Outer
+        inputs:
+          text:
+            required: true
+        runs:
+          using: composite
+          steps:
+            - uses: ./.github/actions/inner
+              with:
+                task: "Label ${{ inputs.text }}"
+      .github/actions/inner/action.yml: |
+        name: Inner
+        inputs:
+          task:
+            required: true
+        runs:
+          using: composite
+          steps:
+            - uses: anthropics/claude-code-action@v1.0.100
+              with:
+                prompt: ${{ inputs.task }}
+
+  - name: composite-output-into-run
+    expect: [AIA010]
+    files:
+      .github/workflows/ai.yml: |
+        on: [issues]
+        jobs:
+          ai:
+            runs-on: ubuntu-latest
+            steps:
+              - uses: actions/checkout@v7
+              - id: suggest
+                uses: ./.github/actions/suggest
+              - run: ${{ steps.suggest.outputs.command }}
+      .github/actions/suggest/action.yml: |
+        name: Suggest
+        outputs:
+          command:
+            value: ${{ steps.ai.outputs.response }}
+        runs:
+          using: composite
+          steps:
+            - id: ai
+              uses: actions/ai-inference@v1.2.0
+              with:
+                prompt: "Suggest a command."
+
+  - name: composite-checkout-of-pr-head
+    expect: [AIA008]
+    files:
+      .github/workflows/ai.yml: |
+        on: [pull_request_target]
+        jobs:
+          ai:
+            runs-on: ubuntu-latest
+            steps:
+              - uses: actions/checkout@v7
+              - uses: ./.github/actions/pr-code
+              - uses: anthropics/claude-code-action@v1.0.100
+                with:
+                  prompt: "Review this change."
+      .github/actions/pr-code/action.yml: |
+        name: PR code
+        runs:
+          using: composite
+          steps:
+            - uses: actions/checkout@v7
+              with:
+                ref: ${{ github.event.pull_request.head.sha }}
+
+  - name: composite-default-input
+    expect: [AIA001]
+    files:
+      .github/workflows/ai.yml: |
+        on: [issues]
+        jobs:
+          ai:
+            runs-on: ubuntu-latest
+            steps:
+              - uses: actions/checkout@v7
+              - uses: ./.github/actions/triage
+      .github/actions/triage/action.yml: |
+        name: Triage
+        inputs:
+          text:
+            default: ${{ github.event.issue.body }}
+        runs:
+          using: composite
+          steps:
+            - uses: anthropics/claude-code-action@v1.0.100
+              with:
+                prompt: "Triage: ${{ inputs.text }}"
+
+  - name: composite-direct-event
+    expect: [AIA001]
+    files:
+      .github/workflows/ai.yml: |
+        on: [issues]
+        jobs:
+          ai:
+            runs-on: ubuntu-latest
+            steps:
+              - uses: actions/checkout@v7
+              - uses: ./.github/actions/triage
+      .github/actions/triage/action.yml: |
+        name: Triage
+        runs:
+          using: composite
+          steps:
+            - uses: anthropics/claude-code-action@v1.0.100
+              with:
+                prompt: "Triage: ${{ github.event.issue.body }}"
+
+  - name: composite-hides-agent-from-token-check
+    expect: [AIA005]
+    files:
+      .github/workflows/ai.yml: |
+        on: [issues]
+        permissions: write-all
+        jobs:
+          ai:
+            runs-on: ubuntu-latest
+            steps:
+              - uses: actions/checkout@v7
+              - uses: ./.github/actions/agent
+      .github/actions/agent/action.yml: |
+        name: Agent
+        runs:
+          using: composite
+          steps:
+            - uses: anthropics/claude-code-action@v1.0.100
+              with:
+                prompt: "Check the build."
+
+  - name: composite-at-repository-root
+    expect: [AIA001]
+    files:
+      .github/workflows/ai.yml: |
+        on: [issues]
+        jobs:
+          ai:
+            runs-on: ubuntu-latest
+            steps:
+              - uses: actions/checkout@v7
+              - uses: ./
+                with:
+                  text: ${{ github.event.issue.body }}
+      action.yml: |
+        name: Root
+        inputs:
+          text:
+            required: true
+        runs:
+          using: composite
+          steps:
+            - uses: anthropics/claude-code-action@v1.0.100
+              with:
+                prompt: ${{ inputs.text }}
+
+reusable:
+  - name: reusable-input-into-prompt
+    expect: [AIA001]
+    files:
+      .github/workflows/ai.yml: |
+        on: [issues]
+        jobs:
+          ai:
+            uses: ./.github/workflows/agent.yml
+            with:
+              text: ${{ github.event.issue.body }}
+      .github/workflows/agent.yml: |
+        on:
+          workflow_call:
+            inputs:
+              text:
+                type: string
+        jobs:
+          run:
+            runs-on: ubuntu-latest
+            steps:
+              - uses: anthropics/claude-code-action@v1.0.100
+                with:
+                  prompt: "Triage: ${{ inputs.text }}"
+
+  - name: reusable-input-through-env
+    expect: [AIA001]
+    files:
+      .github/workflows/ai.yml: |
+        on: [pull_request_target]
+        jobs:
+          ai:
+            uses: ./.github/workflows/agent.yml
+            with:
+              title: ${{ github.event.pull_request.title }}
+      .github/workflows/agent.yml: |
+        on:
+          workflow_call:
+            inputs:
+              title:
+                type: string
+        jobs:
+          run:
+            runs-on: ubuntu-latest
+            env:
+              TITLE: ${{ inputs.title }}
+            steps:
+              - run: claude -p "Review $TITLE"
+
+  - name: reusable-hides-agent-from-token-check
+    expect: [AIA005]
+    files:
+      .github/workflows/ai.yml: |
+        on: [issues]
+        permissions: write-all
+        jobs:
+          ai:
+            uses: ./.github/workflows/agent.yml
+      .github/workflows/agent.yml: |
+        on: [workflow_call]
+        jobs:
+          run:
+            runs-on: ubuntu-latest
+            steps:
+              - uses: anthropics/claude-code-action@v1.0.100
+                with:
+                  prompt: "Check the build."
+
+  - name: reusable-nested
+    expect: [AIA001]
+    files:
+      .github/workflows/ai.yml: |
+        on: [issues]
+        jobs:
+          ai:
+            uses: ./.github/workflows/middle.yml
+            with:
+              text: ${{ github.event.issue.body }}
+      .github/workflows/middle.yml: |
+        on:
+          workflow_call:
+            inputs:
+              text:
+                type: string
+        jobs:
+          next:
+            uses: ./.github/workflows/agent.yml
+            with:
+              task: "Triage ${{ inputs.text }}"
+      .github/workflows/agent.yml: |
+        on:
+          workflow_call:
+            inputs:
+              task:
+                type: string
+        jobs:
+          run:
+            runs-on: ubuntu-latest
+            steps:
+              - uses: anthropics/claude-code-action@v1.0.100
+                with:
+                  prompt: ${{ inputs.task }}
+
+  - name: reusable-into-composite
+    expect: [AIA001]
+    files:
+      .github/workflows/ai.yml: |
+        on: [issues]
+        jobs:
+          ai:
+            uses: ./.github/workflows/agent.yml
+            with:
+              text: ${{ github.event.issue.body }}
+      .github/workflows/agent.yml: |
+        on:
+          workflow_call:
+            inputs:
+              text:
+                type: string
+        jobs:
+          run:
+            runs-on: ubuntu-latest
+            steps:
+              - uses: actions/checkout@v7
+              - uses: ./.github/actions/triage
+                with:
+                  body: ${{ inputs.text }}
+      .github/actions/triage/action.yml: |
+        name: Triage
+        inputs:
+          body:
+            required: true
+        runs:
+          using: composite
+          steps:
+            - uses: anthropics/claude-code-action@v1.0.100
+              with:
+                prompt: ${{ inputs.body }}
+
+  - name: reusable-output-into-run
+    expect: [AIA010]
+    files:
+      .github/workflows/ai.yml: |
+        on: [issues]
+        jobs:
+          ask:
+            uses: ./.github/workflows/agent.yml
+          act:
+            needs: ask
+            runs-on: ubuntu-latest
+            steps:
+              - run: ${{ needs.ask.outputs.command }}
+      .github/workflows/agent.yml: |
+        on:
+          workflow_call:
+            outputs:
+              command:
+                value: ${{ jobs.run.outputs.answer }}
+        jobs:
+          run:
+            runs-on: ubuntu-latest
+            outputs:
+              answer: ${{ steps.ai.outputs.response }}
+            steps:
+              - id: ai
+                uses: actions/ai-inference@v1.2.0
+                with:
+                  prompt: "Suggest a command."
+
+  - name: reusable-checkout-of-pr-head
+    expect: [AIA008]
+    files:
+      .github/workflows/ai.yml: |
+        on: [pull_request_target]
+        jobs:
+          ai:
+            uses: ./.github/workflows/agent.yml
+      .github/workflows/agent.yml: |
+        on: [workflow_call]
+        jobs:
+          run:
+            runs-on: ubuntu-latest
+            steps:
+              - uses: actions/checkout@v7
+                with:
+                  ref: ${{ github.event.pull_request.head.sha }}
+              - uses: anthropics/claude-code-action@v1.0.100
+                with:
+                  prompt: "Review this change."
+
+  - name: reusable-input-through-job-output
+    expect: [AIA001]
+    files:
+      .github/workflows/ai.yml: |
+        on: [issues]
+        jobs:
+          ai:
+            uses: ./.github/workflows/agent.yml
+            with:
+              text: ${{ github.event.issue.body }}
+      .github/workflows/agent.yml: |
+        on:
+          workflow_call:
+            inputs:
+              text:
+                type: string
+        jobs:
+          prepare:
+            runs-on: ubuntu-latest
+            outputs:
+              task: ${{ steps.make.outputs.task }}
+            steps:
+              - id: make
+                env:
+                  TEXT: ${{ inputs.text }}
+                run: echo "task=$TEXT" >> "$GITHUB_OUTPUT"
+          run:
+            needs: prepare
+            runs-on: ubuntu-latest
+            steps:
+              - uses: anthropics/claude-code-action@v1.0.100
+                with:
+                  prompt: ${{ needs.prepare.outputs.task }}
+
+guards:
+  - name: permission-check-result-is-ignored
+    expect: [AIA001, AIA006]
+    files:
+      .github/workflows/ai.yml: |
+        on: [issue_comment]
+        permissions:
+          contents: read
+        jobs:
+          ai:
+            runs-on: ubuntu-latest
+            steps:
+              - run: gh api "repos/$GITHUB_REPOSITORY/collaborators/$GITHUB_ACTOR/permission"
+              - uses: anthropics/claude-code-action@v1.0.100
+                with:
+                  prompt: "Answer: ${{ github.event.comment.body }}"
+
+  - name: unsafe-field-picked-from-gh-output
+    expect: [AIA001]
+    files:
+      .github/workflows/ai.yml: |
+        on: [issue_comment]
+        jobs:
+          ai:
+            runs-on: ubuntu-latest
+            steps:
+              - id: pr
+                run: |
+                  pr=$(gh api "repos/$GITHUB_REPOSITORY/pulls/1")
+                  branch=$(echo "$pr" | jq -r .head.ref)
+                  echo "branch=$branch" >> "$GITHUB_OUTPUT"
+              - uses: anthropics/claude-code-action@v1.0.100
+                with:
+                  prompt: "Review ${{ steps.pr.outputs.branch }}."
+
+  - name: open-path-past-a-partial-guard
+    expect: [AIA009]
+    files:
+      .github/workflows/ai.yml: |
+        on: [pull_request_target, issue_comment]
+        permissions:
+          contents: read
+        jobs:
+          prepare:
+            if: >-
+              github.event_name == 'pull_request_target' ||
+              contains(fromJSON('["OWNER"]'), github.event.comment.author_association)
+            runs-on: ubuntu-latest
+            steps:
+              - run: echo ok
+          review:
+            needs: prepare
+            runs-on: ubuntu-latest
+            steps:
+              - uses: anthropics/claude-code-action@v1.0.100
+                with:
+                  prompt: "Run gh pr view and review the pull request."
+
+  - name: whole-object-picked-from-gh-output
+    expect: [AIA001]
+    files:
+      .github/workflows/ai.yml: |
+        on: [issue_comment]
+        jobs:
+          ai:
+            runs-on: ubuntu-latest
+            steps:
+              - id: pr
+                run: |
+                  pr=$(gh api "repos/$GITHUB_REPOSITORY/pulls/1")
+                  head=$(echo "$pr" | jq -c .head)
+                  echo "head=$head" >> "$GITHUB_OUTPUT"
+              - uses: anthropics/claude-code-action@v1.0.100
+                with:
+                  prompt: "Review ${{ steps.pr.outputs.head }}."
+
+  - name: select-keeps-the-whole-object
+    expect: [AIA001]
+    files:
+      .github/workflows/ai.yml: |
+        on: [issue_comment]
+        jobs:
+          ai:
+            runs-on: ubuntu-latest
+            steps:
+              - run: gh api "repos/$GITHUB_REPOSITORY/pulls" --jq '.[] | select(.number == 1)' > pr.json
+              - uses: anthropics/claude-code-action@v1.0.100
+                with:
+                  prompt: "Read pr.json and review it."
+
+  - name: always-runs-past-a-guarded-job
+    expect: [AIA001, AIA006]
+    files:
+      .github/workflows/ai.yml: |
+        on: [issues]
+        permissions:
+          contents: read
+        jobs:
+          check:
+            if: github.event.issue.author_association == 'OWNER'
+            runs-on: ubuntu-latest
+            steps:
+              - run: echo ok
+          ai:
+            needs: check
+            if: always()
+            runs-on: ubuntu-latest
+            steps:
+              - uses: anthropics/claude-code-action@v1.0.100
+                with:
+                  prompt: "Triage: ${{ github.event.issue.body }}"
+
+gaps:
+  - name: remote-reusable-workflow
+    gap: true
+    expect: [AIA001]
+    files:
+      .github/workflows/ai.yml: |
+        on: [issues]
+        jobs:
+          ai:
+            uses: acme/shared/.github/workflows/agent.yml@v1
+            with:
+              text: ${{ github.event.issue.body }}
+
+  - name: agent-inside-custom-script
+    gap: true
+    expect: [AIA001]
+    files:
+      .github/workflows/ai.yml: |
+        on: [issues]
+        jobs:
+          ai:
+            runs-on: ubuntu-latest
+            steps:
+              - env:
+                  BODY: ${{ github.event.issue.body }}
+                run: python scripts/triage.py
+
+  - name: agent-inside-docker-run
+    gap: true
+    expect: [AIA001]
+    files:
+      .github/workflows/ai.yml: |
+        on: [issues]
+        jobs:
+          ai:
+            runs-on: ubuntu-latest
+            steps:
+              - env:
+                  BODY: ${{ github.event.issue.body }}
+                run: docker run --rm -e BODY ghcr.io/acme/agent claude -p "$BODY"
+
+  - name: tool-without-a-signature
+    gap: true
+    expect: [AIA001]
+    files:
+      .github/workflows/ai.yml: |
+        on: [issues]
+        jobs:
+          ai:
+            runs-on: ubuntu-latest
+            steps:
+              - env:
+                  BODY: ${{ github.event.issue.body }}
+                run: opencode run "$BODY"
+
+safe:
+  - name: trusted-prompt
+    safe: true
+    files:
+      .github/workflows/ai.yml: |
+        on: [pull_request]
+        permissions:
+          contents: read
+        jobs:
+          ai:
+            runs-on: ubuntu-latest
+            steps:
+              - uses: actions/checkout@v7
+              - uses: anthropics/claude-code-action@v1.0.100
+                with:
+                  prompt: "Review the diff for security bugs."
+
+  - name: issue-number-only
+    safe: true
+    files:
+      .github/workflows/ai.yml: |
+        on: [issues]
+        permissions:
+          contents: read
+        jobs:
+          ai:
+            runs-on: ubuntu-latest
+            steps:
+              - uses: step-security/harden-runner@v2
+                with:
+                  egress-policy: block
+              - uses: anthropics/claude-code-action@v1.0.100
+                with:
+                  prompt: "Label issue ${{ github.event.issue.number }}."
+
+  - name: body-in-another-job
+    safe: true
+    files:
+      .github/workflows/ai.yml: |
+        on: [pull_request]
+        permissions:
+          contents: read
+        jobs:
+          log:
+            runs-on: ubuntu-latest
+            steps:
+              - env:
+                  BODY: ${{ github.event.pull_request.body }}
+                run: echo "$BODY"
+          ai:
+            runs-on: ubuntu-latest
+            steps:
+              - uses: anthropics/claude-code-action@v1.0.100
+                with:
+                  prompt: "Review the diff."
+
+  - name: clean-env-shadows-tainted-env
+    safe: true
+    files:
+      .github/workflows/ai.yml: |
+        on: [pull_request]
+        permissions:
+          contents: read
+        env:
+          TEXT: ${{ github.event.pull_request.title }}
+        jobs:
+          ai:
+            runs-on: ubuntu-latest
+            env:
+              TEXT: "Review the diff."
+            steps:
+              - uses: anthropics/claude-code-action@v1.0.100
+                with:
+                  prompt: ${{ env.TEXT }}
+
+  - name: field-empty-on-schedule
+    safe: true
+    allow: [AIA006]
+    files:
+      .github/workflows/ai.yml: |
+        on:
+          schedule:
+            - cron: "0 3 * * *"
+        permissions:
+          contents: read
+        jobs:
+          ai:
+            runs-on: ubuntu-latest
+            steps:
+              - uses: anthropics/claude-code-action@v1.0.100
+                with:
+                  prompt: "Context: ${{ github.event.issue.body }}"
+
+  - name: negated-bot-check
+    safe: true
+    allow: [AIA006]
+    files:
+      .github/workflows/ai.yml: |
+        on: [issue_comment]
+        permissions:
+          contents: read
+        jobs:
+          ai:
+            if: "!endsWith(github.actor, '[bot]')"
+            runs-on: ubuntu-latest
+            steps:
+              - uses: anthropics/claude-code-action@v1.0.100
+                with:
+                  prompt: "Check the build."
+
+  - name: agent-name-only-echoed
+    safe: true
+    files:
+      .github/workflows/ai.yml: |
+        on: [issues]
+        jobs:
+          log:
+            runs-on: ubuntu-latest
+            steps:
+              - env:
+                  BODY: ${{ github.event.issue.body }}
+                run: echo "claude will read $BODY later"
+
+  - name: agent-version-check
+    safe: true
+    files:
+      .github/workflows/ai.yml: |
+        on: [issues]
+        jobs:
+          log:
+            runs-on: ubuntu-latest
+            steps:
+              - run: claude --version
+
+  - name: output-only-logged
+    expect: []
+    forbid: [AIA010]
+    files:
+      .github/workflows/ai.yml: |
+        on: [issues]
+        permissions:
+          contents: read
+        jobs:
+          ai:
+            runs-on: ubuntu-latest
+            steps:
+              - id: ai
+                uses: actions/ai-inference@v1.2.0
+                with:
+                  prompt: "Summarize the build."
+              - env:
+                  TEXT: ${{ steps.ai.outputs.response }}
+                run: echo "$TEXT"
+
+  - name: gitlab-trusted-variable
+    safe: true
+    files:
+      .gitlab-ci.yml: |
+        review:
+          script:
+            - claude -p "Review commit $CI_COMMIT_SHA"
+
+  - name: composite-without-an-agent
+    safe: true
+    files:
+      .github/workflows/ai.yml: |
+        on: [issues]
+        jobs:
+          log:
+            runs-on: ubuntu-latest
+            steps:
+              - uses: actions/checkout@v7
+              - uses: ./.github/actions/log
+                with:
+                  text: ${{ github.event.issue.body }}
+      .github/actions/log/action.yml: |
+        name: Log
+        inputs:
+          text:
+            required: true
+        runs:
+          using: composite
+          steps:
+            - shell: bash
+              env:
+                TEXT: ${{ inputs.text }}
+              run: echo "$TEXT"
+
+  - name: composite-input-never-reaches-agent
+    safe: true
+    files:
+      .github/workflows/ai.yml: |
+        on: [issues]
+        permissions:
+          contents: read
+        jobs:
+          ai:
+            runs-on: ubuntu-latest
+            steps:
+              - uses: step-security/harden-runner@v2
+                with:
+                  egress-policy: block
+              - uses: actions/checkout@v7
+              - uses: ./.github/actions/review
+                with:
+                  title: ${{ github.event.issue.title }}
+      .github/actions/review/action.yml: |
+        name: Review
+        inputs:
+          title:
+            required: true
+        runs:
+          using: composite
+          steps:
+            - shell: bash
+              env:
+                TITLE: ${{ inputs.title }}
+              run: echo "$TITLE"
+            - uses: anthropics/claude-code-action@v1.0.100
+              with:
+                prompt: "Review the docs."
+
+  - name: composite-call-behind-author-check
+    expect: [AIA001]
+    max_severity: medium
+    files:
+      .github/workflows/ai.yml: |
+        on: [issues]
+        permissions:
+          contents: read
+        jobs:
+          ai:
+            runs-on: ubuntu-latest
+            steps:
+              - uses: actions/checkout@v7
+              - if: github.event.issue.author_association == 'OWNER'
+                uses: ./.github/actions/triage
+                with:
+                  text: ${{ github.event.issue.body }}
+      .github/actions/triage/action.yml: |
+        name: Triage
+        inputs:
+          text:
+            required: true
+        runs:
+          using: composite
+          steps:
+            - uses: anthropics/claude-code-action@v1.0.100
+              with:
+                prompt: ${{ inputs.text }}
+
+  - name: guard-in-a-needed-job
+    expect: [AIA001]
+    max_severity: medium
+    forbid: [AIA005, AIA006]
+    files:
+      .github/workflows/ai.yml: |
+        on: [issue_comment]
+        jobs:
+          dispatch:
+            if: contains(fromJSON('["OWNER", "MEMBER"]'), github.event.comment.author_association)
+            runs-on: ubuntu-latest
+            outputs:
+              command: ${{ steps.pick.outputs.command }}
+            steps:
+              - id: pick
+                run: echo "command=review" >> "$GITHUB_OUTPUT"
+          review:
+            needs: dispatch
+            if: needs.dispatch.outputs.command == 'review'
+            uses: ./.github/workflows/agent.yml
+      .github/workflows/agent.yml: |
+        on: [workflow_call]
+        permissions:
+          contents: read
+        jobs:
+          run:
+            runs-on: ubuntu-latest
+            steps:
+              - uses: anthropics/claude-code-action@v1.0.100
+                with:
+                  prompt: "Review: ${{ github.event.comment.body }}"
+
+  - name: or-inside-a-function-keeps-the-guard
+    expect: [AIA001]
+    max_severity: medium
+    forbid: [AIA005, AIA006]
+    files:
+      .github/workflows/ai.yml: |
+        on: [issue_comment]
+        permissions:
+          contents: read
+        jobs:
+          ai:
+            if: |-
+              startsWith(github.event.comment.body || github.event.issue.body, '@bot') &&
+              contains(fromJSON('["OWNER"]'), github.event.comment.author_association || github.event.issue.author_association)
+            runs-on: ubuntu-latest
+            steps:
+              - uses: anthropics/claude-code-action@v1.0.100
+                with:
+                  prompt: "Answer: ${{ github.event.comment.body }}"
+
+  - name: fork-check-is-a-guard
+    expect: [AIA001]
+    max_severity: medium
+    files:
+      .github/workflows/ai.yml: |
+        on: [pull_request_target]
+        permissions:
+          contents: read
+        jobs:
+          ai:
+            if: github.event.pull_request.head.repo.fork == false
+            runs-on: ubuntu-latest
+            steps:
+              - uses: anthropics/claude-code-action@v1.0.100
+                with:
+                  prompt: "Review: ${{ github.event.pull_request.title }}"
+
+  - name: permission-check-step-that-fails
+    expect: [AIA001]
+    max_severity: medium
+    forbid: [AIA005, AIA006]
+    files:
+      .github/workflows/ai.yml: |
+        on: [issue_comment]
+        permissions:
+          contents: read
+        jobs:
+          ai:
+            runs-on: ubuntu-latest
+            steps:
+              - uses: actions/github-script@v8
+                with:
+                  script: |
+                    const { data } = await github.rest.repos.getCollaboratorPermissionLevel({
+                      owner: context.repo.owner, repo: context.repo.repo, username: context.actor,
+                    });
+                    if (data.permission !== 'admin') core.setFailed('Not allowed');
+              - uses: anthropics/claude-code-action@v1.0.100
+                with:
+                  prompt: "Answer: ${{ github.event.comment.body }}"
+
+  - name: permission-check-output-in-a-needed-job
+    expect: [AIA001]
+    max_severity: medium
+    forbid: [AIA005, AIA006]
+    files:
+      .github/workflows/ai.yml: |
+        on: [issue_comment]
+        permissions:
+          contents: read
+        jobs:
+          auth:
+            runs-on: ubuntu-latest
+            outputs:
+              allowed: ${{ steps.check.outputs.allowed }}
+            steps:
+              - id: check
+                run: |
+                  perm=$(gh api "repos/$GITHUB_REPOSITORY/collaborators/$GITHUB_ACTOR/permission" --jq .permission)
+                  echo "allowed=$([ "$perm" = admin ] && echo true)" >> "$GITHUB_OUTPUT"
+          ai:
+            needs: auth
+            if: needs.auth.outputs.allowed == 'true'
+            runs-on: ubuntu-latest
+            steps:
+              - uses: anthropics/claude-code-action@v1.0.100
+                with:
+                  prompt: "Answer: ${{ github.event.comment.body }}"
+
+  - name: safe-field-picked-from-gh-output
+    safe: true
+    allow: [AIA006]
+    files:
+      .github/workflows/ai.yml: |
+        on: [issue_comment]
+        permissions:
+          contents: read
+        jobs:
+          ai:
+            runs-on: ubuntu-latest
+            steps:
+              - id: pr
+                run: |
+                  pr=$(gh api "repos/$GITHUB_REPOSITORY/pulls/1")
+                  sha=$(echo "$pr" | jq -r .head.sha)
+                  echo "sha=$sha" >> "$GITHUB_OUTPUT"
+              - uses: anthropics/claude-code-action@v1.0.100
+                with:
+                  prompt: "Review commit ${{ steps.pr.outputs.sha }}."
+
+  - name: folder-named-after-an-agent
+    safe: true
+    files:
+      .github/workflows/ai.yml: |
+        on: [issues]
+        jobs:
+          log:
+            runs-on: ubuntu-latest
+            steps:
+              - env:
+                  EVENT: ${{ toJSON(github.event) }}
+                run: |
+                  MATCHED=$(python3 .github/claude/scripts/match.py "$EVENT")
+                  echo "$MATCHED"
+
+  - name: fork-pull-request-has-no-secrets
+    expect: [AIA001]
+    max_severity: high
+    files:
+      .github/workflows/ai.yml: |
+        on: [pull_request]
+        jobs:
+          ai:
+            runs-on: ubuntu-latest
+            steps:
+              - uses: anthropics/claude-code-action@v1.0.100
+                with:
+                  prompt: "Review: ${{ github.event.pull_request.title }}"
+
+  - name: repository-dispatch-needs-a-token
+    expect: [AIA001]
+    max_severity: high
+    files:
+      .github/workflows/ai.yml: |
+        on: [repository_dispatch]
+        jobs:
+          ai:
+            runs-on: ubuntu-latest
+            steps:
+              - uses: anthropics/claude-code-action@v1.0.100
+                with:
+                  prompt: "Do this: ${{ github.event.client_payload.task }}"
+
+  - name: manual-run-path-needs-write-access
+    expect: [AIA001]
+    max_severity: medium
+    forbid: [AIA009]
+    files:
+      .github/workflows/ai.yml: |
+        on: [issue_comment, workflow_dispatch]
+        permissions:
+          contents: read
+        jobs:
+          ai:
+            if: >-
+              github.event_name == 'workflow_dispatch' ||
+              contains(fromJSON('["OWNER"]'), github.event.comment.author_association)
+            runs-on: ubuntu-latest
+            steps:
+              - uses: anthropics/claude-code-action@v1.0.100
+                with:
+                  prompt: "Run gh pr view, then answer: ${{ github.event.comment.body }}"
+
+  - name: reusable-gets-a-trusted-input
+    safe: true
+    files:
+      .github/workflows/ai.yml: |
+        on: [pull_request]
+        permissions:
+          contents: read
+        jobs:
+          ai:
+            uses: ./.github/workflows/agent.yml
+            with:
+              number: ${{ github.event.pull_request.number }}
+      .github/workflows/agent.yml: |
+        on:
+          workflow_call:
+            inputs:
+              number:
+                type: number
+        permissions:
+          contents: read
+        jobs:
+          run:
+            runs-on: ubuntu-latest
+            steps:
+              - uses: anthropics/claude-code-action@v1.0.100
+                with:
+                  prompt: "Review pull request ${{ inputs.number }}."
+
+  - name: reusable-call-behind-author-check
+    expect: [AIA001]
+    max_severity: medium
+    forbid: [AIA005, AIA006]
+    files:
+      .github/workflows/ai.yml: |
+        on: [issues]
+        jobs:
+          ai:
+            if: github.event.issue.author_association == 'OWNER'
+            uses: ./.github/workflows/agent.yml
+            with:
+              text: ${{ github.event.issue.body }}
+      .github/workflows/agent.yml: |
+        on:
+          workflow_call:
+            inputs:
+              text:
+                type: string
+        permissions:
+          contents: read
+        jobs:
+          run:
+            runs-on: ubuntu-latest
+            steps:
+              - uses: anthropics/claude-code-action@v1.0.100
+                with:
+                  prompt: ${{ inputs.text }}

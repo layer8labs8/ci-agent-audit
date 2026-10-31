@@ -2,9 +2,6 @@ id: goose-ci
 name: Block Goose Autonomous Agent CLI & Action
 vendor: Block
 description: Block's Goose autonomous developer agent running in CI/CD pipelines.
-action_prefixes:
-  - block/goose-action
-  - square/goose-action
 cli_binaries:
   - goose
 cli_subcommands:
