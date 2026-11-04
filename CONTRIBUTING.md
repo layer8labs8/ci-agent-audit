@@ -61,6 +61,7 @@ python -m ci_agent_audit.cli validate-signatures
 ### Keep a Signature Accurate
 
 - **Commands:** if the tool has commands that don't start the agent, such as `auth` or `models`, set `cli_subcommands` to the ones that do. Otherwise those commands count as agent runs.
+- **Default agent mode:** for tools that start an agent without a subcommand, use `cli_non_agent_subcommands` to exclude their management commands while retaining default launches.
 - **Flags:** a pattern is searched across the whole `run:` block. `--auto` on its own also matches `--autostash` and `gh pr merge --auto`, so tie short flags to the command: `"tool\\s+run\\s+.*--auto(?:\\s|$)"`.
 - **New names:** when a project moves to another GitHub owner, keep the old name in `action_prefixes` and add the new one. Older workflows keep using the old name.
 

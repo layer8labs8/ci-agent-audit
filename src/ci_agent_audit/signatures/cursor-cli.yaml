@@ -1,0 +1,35 @@
+id: cursor-cli
+name: Cursor CLI
+vendor: Cursor
+description: Cursor Agent headless and interactive CLI, including its backward-compatible cursor-agent alias.
+cli_binaries:
+  - cursor-agent
+  - agent
+cli_non_agent_subcommands:
+  - login
+  - logout
+  - status
+  - whoami
+  - about
+  - models
+  - mcp
+  - sandbox
+  - worker
+  - update
+  - ls
+  - create-chat
+  - generate-rule
+  - rule
+  - install-shell-integration
+  - uninstall-shell-integration
+  - help
+dangerous_inputs: {}
+dangerous_arg_patterns:
+  - pattern: "(?:^|\\s)--force(?:\\s|$)"
+    reason: "Allows agent commands without confirmation unless explicitly denied."
+  - pattern: "(?:^|\\s)--yolo(?:\\s|$)"
+    reason: "Alias for --force, allowing commands without confirmation."
+  - pattern: "--sandbox[=\\s]+disabled(?:\\s|$)"
+    reason: "Disables the agent sandbox."
+  - pattern: "(?:^|\\s)--approve-mcps(?:\\s|$)"
+    reason: "Automatically approves all MCP servers."
