@@ -396,12 +396,16 @@ def _match_cli_signatures(
         if not any(name in run_script for name in (*sig.cli_binaries, *sig.cli_packages)):
             continue
         subcommand = rf"\s+(?:{'|'.join(map(re.escape, sig.cli_subcommands))})\b" if sig.cli_subcommands else ""
+        non_agent = (
+            rf"(?!\s+(?:{'|'.join(map(re.escape, sig.cli_non_agent_subcommands))})(?=\s|$|[;&|)]))"
+            if sig.cli_non_agent_subcommands else ""
+        )
         patterns = [
-            rf"{CLI_PREFIX}(?:{CLI_RUNNER})?(?:[\w./~-]*/)?{re.escape(binary)}(?![\w./-]){subcommand}{CLI_INFO_ONLY}"
+            rf"{CLI_PREFIX}(?:{CLI_RUNNER})?(?:[\w./~-]*/)?{re.escape(binary)}(?![\w./-]){non_agent}{subcommand}{CLI_INFO_ONLY}"
             for binary in sig.cli_binaries
         ]
         patterns += [
-            rf"{CLI_PREFIX}{CLI_RUNNER}{re.escape(package)}(?:@[\w.-]+)?(?![\w./-]){CLI_INFO_ONLY}"
+            rf"{CLI_PREFIX}{CLI_RUNNER}{re.escape(package)}(?:@[\w.-]+)?(?![\w./-]){non_agent}{CLI_INFO_ONLY}"
             for package in sig.cli_packages
         ]
         if any(re.search(pattern, run_script, re.MULTILINE) for pattern in patterns):

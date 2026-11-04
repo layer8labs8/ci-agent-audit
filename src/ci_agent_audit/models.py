@@ -69,6 +69,7 @@ class ActionSignature:
     cli_binaries: list[str] = field(default_factory=list)
     cli_packages: list[str] = field(default_factory=list)
     cli_subcommands: list[str] = field(default_factory=list)
+    cli_non_agent_subcommands: list[str] = field(default_factory=list)
     prompt_inputs: list[str] = field(default_factory=list)
     env_prompt_inputs: list[str] = field(default_factory=list)
     cli_prompt_flags: list[str] = field(default_factory=list)
