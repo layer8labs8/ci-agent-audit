@@ -252,14 +252,14 @@ Every change runs against [`benchmark/cases.yml`](https://github.com/layer8labs8
 
 | Cases                     | Number | Findings caught | Missed | False alarms |
 | :------------------------ | -----: | --------------: | -----: | -----------: |
-| Direct risks              |     54 |              55 |      0 |            0 |
+| Direct risks              |     55 |              56 |      0 |            0 |
 | Local composite actions   |     10 |              10 |      0 |            0 |
 | Reusable workflows        |      8 |               8 |      0 |            0 |
 | Guard and data-flow traps |      8 |               8 |      0 |            0 |
 | Safe setups               |     35 |              10 |      0 |            0 |
-| Known gaps                |      7 |               0 |      7 |            0 |
+| Known gaps                |      6 |               0 |      6 |            0 |
 
-That's 92.9% recall and 100% precision on these cases. We wrote them ourselves, so treat this as a regression check and not a promise about your repository. The seven misses cover remote reusable workflows, agents inside custom scripts, tools with no signature yet, and OpenHands CLI wrappers and approval flags. The OpenHands report adds known misses without changing the scanner engine.
+That's 93.9% recall and 100% precision on these cases. We wrote them ourselves, so treat this as a regression check and not a promise about your repository. The six misses cover remote reusable workflows, agents inside custom scripts, tools with no signature yet, and OpenHands CLI approval flags. The OpenHands report adds known misses without changing the scanner engine.
 
 Engine changes are also compared on the CI files of 135 public repositories that use AI agents. Following local files raised the repositories with a finding from 83 to 95, with no crashes, and the scan ran about a third faster. Those findings are risky patterns, not proven attacks.
 

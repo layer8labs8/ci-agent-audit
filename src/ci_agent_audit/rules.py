@@ -292,7 +292,11 @@ CLI_PREFIX = (
     r"(?:^|[;&|(]\s*|\$\(\s*)[ \t]*"
     rf"(?:(?:sudo|nohup|time|exec|command|xvfb-run|timeout\s+\S+|env|[A-Za-z_]\w*=\S*|{CONTAINER_RUN})\s+)*"
 )
-CLI_RUNNER = r"(?:npx|bunx|uvx|pipx\s+run|pnpm\s+dlx|yarn\s+dlx)(?:\s+-{1,2}\S+)*\s+"
+CLI_RUNNER = (
+    r"(?:(?:npx|bunx|uvx|pipx\s+run|pnpm\s+dlx|yarn\s+dlx)(?:\s+-{1,2}\S+)*"
+    r"|uv\s+run(?:\s+-{1,2}\S+(?:\s+\S+)?)*"
+    r")\s+"
+)
 CLI_INFO_ONLY = r"(?!\s+(?:--version|-v|--help|-h)\s*(?:$|[;&|)]))"
 
 SPOOFABLE_BOT_RE = re.compile(
