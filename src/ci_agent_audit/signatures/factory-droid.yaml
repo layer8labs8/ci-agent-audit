@@ -1,0 +1,27 @@
+id: factory-droid
+name: Factory Droid
+vendor: Factory
+description: Factory Droid CLI and GitHub Action for AI-assisted code review, issue triage, and CI automation.
+action_prefixes:
+  - Factory-AI/droid-action
+cli_binaries:
+  - droid
+cli_packages:
+  - "@factory/cli"
+cli_subcommands:
+  - exec
+prompt_inputs:
+  - instructions
+cli_prompt_flags:
+  - -f
+  - --file
+  - --append-system-prompt
+  - --append-system-prompt-file
+dangerous_inputs:
+  allowed_bots: "*"
+  allowed_non_write_users: "*"
+dangerous_arg_patterns:
+  - pattern: "--auto[=\\s]+high(?:\\s|$)"
+    reason: "Enables high autonomy for high-risk automation such as remote writes and deployments. Use only in a controlled environment with appropriate safeguards. See https://docs.factory.ai/droid-exec/overview."
+  - pattern: "--skip-permissions-unsafe"
+    reason: "Skips all permission prompts. Factory documents this as unsafe and recommends it only for isolated, disposable environments; command blocks still apply. See https://docs.factory.ai/droid-cli/cli-reference."
