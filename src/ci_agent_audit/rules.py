@@ -387,6 +387,53 @@ def _split_docker_tag(slug: str) -> tuple[str, str | None]:
         return image, tag
     return slug, None
 
+def _match_docker_image_signature(
+    image_value: Any,
+    signatures: list[ActionSignature],
+) -> tuple[ActionSignature | None, str | None, bool]:
+    """Match a GitLab CI image against known Docker-based AI agent signatures.
+
+    Returns (matched_signature, image_tag, digest_pinned).
+    """
+    if isinstance(image_value, Mapping):
+        image_value = image_value.get("name")
+
+    if not isinstance(image_value, str):
+        return None, None, False
+
+    image = image_value.strip()
+
+    if image.lower().startswith("docker://"):
+        image = image[len("docker://"):]
+
+    # Separate the digest before parsing the optional tag.
+    digest = None
+    if "@" in image:
+        image, digest = image.rsplit("@", 1)
+
+    digest_pinned = bool(
+        digest and re.fullmatch(r"sha256:[0-9a-fA-F]{64}", digest)
+    )
+
+    image_slug, image_tag = _split_docker_tag("docker://" + image)
+    image_slug = image_slug.removeprefix("docker://")
+
+    for sig in signatures:
+        for prefix in sig.action_prefixes:
+            if not prefix.lower().startswith("docker://"):
+                continue
+
+            prefix_slug, _ = _split_docker_tag(prefix)
+            prefix_slug = prefix_slug.removeprefix("docker://")
+
+            if (
+                image_slug.lower() == prefix_slug.lower()
+                or image_slug.lower().startswith(prefix_slug.lower() + "/")
+            ):
+                return sig, image_tag, digest_pinned
+
+    return None, image_tag, digest_pinned
+
 
 def _match_cli_signatures(
     run_script: str,
@@ -1880,10 +1927,91 @@ def _scan_gitlab_jobs(
     for job_name, job_body in root.items():
         if not isinstance(job_body, LineDict):
             continue
-        if not any(key in job_body for key in _GITLAB_SCRIPT_KEYS):
+        if not any(key in job_body for key in _GITLAB_SCRIPT_KEYS) and "image" not in job_body:
             continue
         job_vars = job_body.get("variables") if isinstance(job_body.get("variables"), Mapping) else None
         tainted_env = collect_tainted_env_map(global_vars, job_vars)
+
+                # Docker image-based AI Agent detection
+        if "image" in job_body:
+            image_value = job_body.get("image")
+
+            image_sig, image_tag, digest_pinned = (
+                _match_docker_image_signature(
+                    image_value,
+                    signatures,
+                )
+            )
+
+            if image_sig is not None:
+                image_line = job_body.get_key_line(
+                    "image",
+                    job_body.__line__,
+                )
+                image_col = job_body.get_key_col("image")
+
+                # AIA001: Check whether an untrusted GitLab variable
+                # reaches an agent prompt input through its environment.
+                taint_sources = []
+
+                prompt_env_keys = {
+                    _env_config_key(name)
+                    for name in (
+                        getattr(image_sig, "env_prompt_inputs", None) or []
+                    )
+                }
+
+                for env_key, env_sources in tainted_env.items():
+                    if _env_config_key(env_key) not in prompt_env_keys:
+                        continue
+
+                    taint_sources.extend(env_sources)
+
+                if taint_sources:
+                    findings.append(
+                        _make_finding(
+                            rule_id="AIA001",
+                            file_path=file_path,
+                            line=image_line,
+                            col=image_col,
+                            job_id=str(job_name),
+                            step_name="image",
+                            tool_id=image_sig.id,
+                            snippet=_get_snippet(raw_lines, image_line),
+                            message=(
+                                f"Untrusted GitLab CI variable "
+                                f"({_describe_sources(taint_sources)}) flows into "
+                                f"{image_sig.name} through its environment "
+                                f"in job '{job_name}' (PromptPwnd risk)."
+                            ),
+                        )
+                    )
+
+                # AIA004: Require an immutable image reference.
+                if not digest_pinned and (
+                    not image_tag or image_tag.lower() == "latest"
+                ):
+                    findings.append(
+                        _make_finding(
+                            rule_id="AIA004",
+                            file_path=file_path,
+                            line=image_line,
+                            col=image_col,
+                            job_id=str(job_name),
+                            step_name="image",
+                            tool_id=image_sig.id,
+                            snippet=_get_snippet(raw_lines, image_line),
+                            message=(
+                                f"AI agent image is not pinned to an immutable "
+                                f"reference in GitLab CI job '{job_name}'. "
+                                f"Image tags such as `latest`, or an image "
+                                f"without a tag or digest, can change over time. "
+                                f"Pin the image to a specific version or "
+                                f"SHA256 digest."
+                            ),
+                        )
+                    )
+
         before_script = _gitlab_effective_before_script(root, job_body)
         before_script_text = _render_gitlab_script_block(before_script)
         before_script_env = _gitlab_env_after_exports(before_script_text, tainted_env)

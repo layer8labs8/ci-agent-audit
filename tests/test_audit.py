@@ -380,3 +380,110 @@ jobs:
     sarif_data = json.loads(sarif_out.read_text(encoding="utf-8"))
     assert sarif_data["version"] == "2.1.0"
     assert len(sarif_data["runs"][0]["results"]) >= 2
+
+# ---------------------------------------------------------------------------
+# GitLab CI Docker image-based AI agent detection tests
+# ---------------------------------------------------------------------------
+
+def _scan_gitlab_image(tmp_path, content: str):
+    """Write a GitLab CI configuration and scan it."""
+    workflow = tmp_path / ".gitlab-ci.yml"
+    workflow.write_text(content, encoding="utf-8")
+    return scan_workflow_file(workflow)
+
+
+def test_gitlab_agent_image_with_tag_detects_untrusted_prompt(tmp_path):
+    """A tagged AI agent image should detect untrusted prompt input."""
+    findings = _scan_gitlab_image(
+        tmp_path,
+        """
+variables:
+  PR_REVIEWER__EXTRA_INSTRUCTIONS: $CI_MERGE_REQUEST_DESCRIPTION
+
+review:
+  image: pragent/pr-agent:0.41.0
+""",
+    )
+
+    rule_ids = {finding.rule_id for finding in findings}
+
+    assert "AIA001" in rule_ids
+    assert "AIA004" not in rule_ids
+
+
+def test_gitlab_agent_image_latest_reports_aia004(tmp_path):
+    """An AI agent image using latest should report AIA004."""
+    findings = _scan_gitlab_image(
+        tmp_path,
+        """
+review:
+  image: pragent/pr-agent:latest
+""",
+    )
+
+    rule_ids = {finding.rule_id for finding in findings}
+
+    assert "AIA004" in rule_ids
+
+
+def test_gitlab_agent_image_without_tag_reports_aia004(tmp_path):
+    """An AI agent image without a tag should report AIA004."""
+    findings = _scan_gitlab_image(
+        tmp_path,
+        """
+review:
+  image: pragent/pr-agent
+""",
+    )
+
+    rule_ids = {finding.rule_id for finding in findings}
+
+    assert "AIA004" in rule_ids
+
+
+def test_gitlab_agent_image_digest_is_pinned(tmp_path):
+    """An AI agent image pinned by SHA256 digest should not report AIA004."""
+    findings = _scan_gitlab_image(
+        tmp_path,
+        """
+review:
+  image: pragent/pr-agent@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+""",
+    )
+
+    rule_ids = {finding.rule_id for finding in findings}
+
+    assert "AIA004" not in rule_ids
+
+
+def test_gitlab_agent_image_mapping_form_is_detected(tmp_path):
+    """The GitLab image mapping form should also be detected."""
+    findings = _scan_gitlab_image(
+        tmp_path,
+        """
+variables:
+  PR_REVIEWER__EXTRA_INSTRUCTIONS: $CI_MERGE_REQUEST_DESCRIPTION
+
+review:
+  image:
+    name: pragent/pr-agent:latest
+""",
+    )
+
+    rule_ids = {finding.rule_id for finding in findings}
+
+    assert "AIA001" in rule_ids
+    assert "AIA004" in rule_ids
+
+
+def test_gitlab_unrelated_image_is_not_flagged(tmp_path):
+    """An unrelated Docker image should not trigger AI agent findings."""
+    findings = _scan_gitlab_image(
+        tmp_path,
+        """
+review:
+  image: python:3.13
+""",
+    )
+
+    assert findings == []
