@@ -804,6 +804,23 @@ direct:
                 run: echo "task=$BODY" >> "$GITHUB_OUTPUT"
               - run: openhands --task "${{ steps.text.outputs.task }}"
 
+  - name: google-jules-legacy-action-ref
+    expect: [AIA001]
+    files:
+      .github/workflows/ai.yml: |
+        on:
+          issues:
+            types: [opened]
+        permissions:
+          contents: read
+        jobs:
+          triage:
+            runs-on: ubuntu-latest
+            steps:
+              - uses: google-labs-code/jules-invoke@v1
+                with:
+                  prompt: "Triage: ${{ github.event.issue.body }}"
+
 composite:
   - name: composite-input-into-prompt
     expect: [AIA001]

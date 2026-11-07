@@ -248,11 +248,11 @@ Exit codes: `0` means nothing reached the `--fail-on` level, `1` means something
 
 ## How accurate is it?
 
-Every change runs against [`benchmark/cases.yml`](https://github.com/layer8labs8/ci-agent-audit/blob/main/benchmark/cases.yml), 122 small repositories labelled with what must fire and what must stay quiet.
+Every change runs against [`benchmark/cases.yml`](https://github.com/layer8labs8/ci-agent-audit/blob/main/benchmark/cases.yml), 123 small repositories labelled with what must fire and what must stay quiet.
 
 | Cases                     | Number | Findings caught | Missed | False alarms |
 | :------------------------ | -----: | --------------: | -----: | -----------: |
-| Direct risks              |     54 |              55 |      0 |            0 |
+| Direct risks              |     55 |              56 |      0 |            0 |
 | Local composite actions   |     10 |              10 |      0 |            0 |
 | Reusable workflows        |      8 |               8 |      0 |            0 |
 | Guard and data-flow traps |      9 |               9 |      0 |            0 |
