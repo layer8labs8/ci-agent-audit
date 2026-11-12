@@ -804,6 +804,37 @@ direct:
                 run: echo "task=$BODY" >> "$GITHUB_OUTPUT"
               - run: openhands --task "${{ steps.text.outputs.task }}"
 
+  - name: sweagent-text-from-issue-body
+    expect: [AIA001]
+    files:
+      .github/workflows/ai.yml: |
+        on:
+          issues:
+            types: [labeled]
+        permissions:
+          contents: write
+          pull-requests: write
+        jobs:
+          fix:
+            runs-on: ubuntu-latest
+            steps:
+              - uses: actions/checkout@v4
+              - run: |
+                  sweagent run --problem_statement.text "Fix this: ${{ github.event.issue.body }}"
+
+  - name: sweagent-github-url-with-local-deployment
+    expect: [AIA002]
+    files:
+      .github/workflows/ai.yml: |
+        on: [workflow_dispatch]
+        jobs:
+          fix:
+            runs-on: ubuntu-latest
+            steps:
+              - uses: actions/checkout@v4
+              - run: |
+                  sweagent run --problem_statement.github_url https://github.com/example/widgets/issues/42 --environment.deployment.type=local
+
 composite:
   - name: composite-input-into-prompt
     expect: [AIA001]
