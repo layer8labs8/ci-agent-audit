@@ -12,10 +12,13 @@ prompt_inputs:
   - system-prompt-file
   - prompt-file
   - input
+  - file_input
 cli_prompt_flags:
   - --prompt
 dangerous_inputs: {}
 dangerous_arg_patterns:
   - pattern: "--allow-tool-execution"
     reason: "Permits automated execution of external tools from LLM inference output."
+  - pattern: "shell\\(\\*\\)"
+    reason: "Grants the model unrestricted shell command execution when passed through copilot-allow-tools or --allow-tool."
 advisory_url: "https://www.aikido.dev/blog/promptpwnd-github-actions-ai-agents"

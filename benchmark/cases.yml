@@ -804,6 +804,34 @@ direct:
                 run: echo "task=$BODY" >> "$GITHUB_OUTPUT"
               - run: openhands --task "${{ steps.text.outputs.task }}"
 
+  - name: ai-inference-file-input-injection
+    expect: [AIA001]
+    files:
+      .github/workflows/ai.yml: |
+        on: [issues]
+        jobs:
+          ai:
+            runs-on: ubuntu-latest
+            steps:
+              - uses: actions/ai-inference@v3
+                with:
+                  prompt-file: ./.github/prompts/triage.prompt.yml
+                  file_input: |
+                    body: ${{ github.event.issue.body }}
+
+  - name: ai-inference-copilot-allow-tools-unrestricted-shell
+    expect: [AIA002]
+    files:
+      .github/workflows/ai.yml: |
+        on: [issues]
+        jobs:
+          ai:
+            runs-on: ubuntu-latest
+            steps:
+              - uses: actions/ai-inference@v3
+                with:
+                  prompt: "Summarize this issue."
+                  copilot-allow-tools: "shell(*)"
 composite:
   - name: composite-input-into-prompt
     expect: [AIA001]
@@ -1519,6 +1547,28 @@ gaps:
             steps:
               - run: openhands --headless --task "Review the formatting rules."
 
+  # A github-script step writes the prompt file from the event payload in
+  # JavaScript (the shape used by real production workflows), so the tainted
+  # content never passes through an expression or env var the scanner tracks
+  # into the prompt-file sink.
+  - name: ai-inference-prompt-file-written-by-script
+    gap: true
+    expect: [AIA001]
+    files:
+      .github/workflows/ai.yml: |
+        on: [issues]
+        jobs:
+          ai:
+            runs-on: ubuntu-latest
+            steps:
+              - uses: actions/github-script@v7
+                with:
+                  script: |
+                    const fs = require('fs');
+                    fs.writeFileSync('prompt.txt', context.payload.issue.body);
+              - uses: actions/ai-inference@v3
+                with:
+                  prompt-file: prompt.txt
 safe:
   - name: trusted-prompt
     safe: true
@@ -2196,3 +2246,21 @@ safe:
                   BODY: ${{ github.event.issue.body }}
                 run: printf '%s' "$BODY" > /dev/null
               - run: openhands -t "Review the formatting rules."
+  - name: ai-inference-trusted-static-prompt
+    safe: true
+    files:
+      .github/workflows/ai.yml: |
+        on: [pull_request]
+        permissions:
+          contents: read
+        jobs:
+          ai:
+            runs-on: ubuntu-latest
+            steps:
+              - uses: step-security/harden-runner@v2
+                with:
+                  egress-policy: block
+              - uses: actions/ai-inference@2c43c91ae16266ca159d311430343c67a5ffa222
+                with:
+                  prompt: "Summarize the latest changes in this repository."
+                  copilot-allow-tools: "shell(git:*)"
