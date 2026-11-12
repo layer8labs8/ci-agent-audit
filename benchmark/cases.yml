@@ -804,6 +804,37 @@ direct:
                 run: echo "task=$BODY" >> "$GITHUB_OUTPUT"
               - run: openhands --task "${{ steps.text.outputs.task }}"
 
+  - name: continue-cn-prompt-from-pr-body
+    expect: [AIA001]
+    files:
+      .github/workflows/ai.yml: |
+        on:
+          pull_request:
+            types: [opened]
+        permissions:
+          contents: read
+          pull-requests: write
+        jobs:
+          review:
+            runs-on: ubuntu-latest
+            steps:
+              - uses: actions/checkout@v4
+              - run: |
+                  cn -p "Check this PR for security issues: ${{ github.event.pull_request.body }}"
+
+  - name: continue-npx-allow-all-tools
+    expect: [AIA002]
+    files:
+      .github/workflows/ai.yml: |
+        on: [workflow_dispatch]
+        jobs:
+          review:
+            runs-on: ubuntu-latest
+            steps:
+              - uses: actions/checkout@v4
+              - run: |
+                  npx @continuedev/cli -p "Summarize the changes" --allow-all-tools
+
 composite:
   - name: composite-input-into-prompt
     expect: [AIA001]
@@ -2196,3 +2227,36 @@ safe:
                   BODY: ${{ github.event.issue.body }}
                 run: printf '%s' "$BODY" > /dev/null
               - run: openhands -t "Review the formatting rules."
+
+  - name: continue-general-review-action-as-documented
+    safe: true
+    files:
+      .github/workflows/ai.yml: |
+        on:
+          pull_request:
+            types: [opened]
+        permissions:
+          contents: read
+          pull-requests: write
+        jobs:
+          review:
+            runs-on: ubuntu-latest
+            steps:
+              - uses: actions/checkout@v4
+              - uses: continuedev/continue/actions/general-review@v1.0.0
+                with:
+                  continue-api-key: ${{ secrets.CONTINUE_API_KEY }}
+                  continue-org: example-org
+                  continue-agent: example-org/review-bot
+
+  - name: local-script-named-cn-is-not-continue
+    safe: true
+    files:
+      .github/workflows/ai.yml: |
+        on: [push]
+        jobs:
+          build:
+            runs-on: ubuntu-latest
+            steps:
+              - uses: actions/checkout@v4
+              - run: ./scripts/cn -p "not an ai prompt"
