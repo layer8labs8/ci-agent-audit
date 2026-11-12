@@ -804,6 +804,62 @@ direct:
                 run: echo "task=$BODY" >> "$GITHUB_OUTPUT"
               - run: openhands --task "${{ steps.text.outputs.task }}"
 
+  - name: coderabbit-legacy-action-review-prompt
+    expect: [AIA001]
+    files:
+      .github/workflows/ai.yml: |
+        on:
+          pull_request:
+            types: [opened]
+        permissions:
+          contents: read
+          pull-requests: write
+        jobs:
+          review:
+            runs-on: ubuntu-latest
+            steps:
+              - uses: actions/checkout@v4
+              - uses: coderabbitai/ai-pr-reviewer@v0.11.0
+                with:
+                  review_prompt: "Review this PR: ${{ github.event.pull_request.body }}"
+
+  - name: coderabbit-openai-reviewer-system-message
+    expect: [AIA001]
+    files:
+      .github/workflows/ai.yml: |
+        on:
+          pull_request:
+            types: [opened]
+        permissions:
+          contents: read
+          pull-requests: write
+        jobs:
+          review:
+            runs-on: ubuntu-latest
+            steps:
+              - uses: actions/checkout@v4
+              - uses: coderabbitai/openai-pr-reviewer@v1.0.0
+                with:
+                  system_message: "You are reviewing: ${{ github.event.pull_request.title }}"
+
+  - name: coderabbit-cli-prompt-from-pr-body
+    expect: [AIA001]
+    files:
+      .github/workflows/ai.yml: |
+        on:
+          pull_request:
+            types: [opened]
+        permissions:
+          contents: read
+          pull-requests: write
+        jobs:
+          review:
+            runs-on: ubuntu-latest
+            steps:
+              - uses: actions/checkout@v4
+              - run: |
+                  coderabbit --prompt "Review: ${{ github.event.pull_request.body }}"
+
 composite:
   - name: composite-input-into-prompt
     expect: [AIA001]
@@ -2196,3 +2252,26 @@ safe:
                   BODY: ${{ github.event.issue.body }}
                 run: printf '%s' "$BODY" > /dev/null
               - run: openhands -t "Review the formatting rules."
+
+  - name: coderabbit-comment-mention-stays-quiet
+    safe: true
+    files:
+      .github/workflows/ai.yml: |
+        on:
+          issue_comment:
+            types: [created]
+        permissions:
+          pull-requests: write
+        jobs:
+          mention:
+            runs-on: ubuntu-latest
+            steps:
+              - uses: actions/github-script@v7
+                with:
+                  script: |
+                    github.rest.issues.createComment({
+                      owner: context.repo.owner,
+                      repo: context.repo.repo,
+                      issue_number: context.issue.number,
+                      body: "@coderabbitai review"
+                    })
