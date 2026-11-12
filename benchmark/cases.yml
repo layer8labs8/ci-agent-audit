@@ -804,6 +804,49 @@ direct:
                 run: echo "task=$BODY" >> "$GITHUB_OUTPUT"
               - run: openhands --task "${{ steps.text.outputs.task }}"
 
+  - name: ccsr-custom-instructions-from-pr-body
+    expect: [AIA001]
+    files:
+      .github/workflows/ai.yml: |
+        on:
+          pull_request_target:
+        permissions:
+          contents: read
+          pull-requests: write
+          security-events: write
+        jobs:
+          review:
+            runs-on: ubuntu-latest
+            steps:
+              - uses: actions/checkout@v4
+              - uses: anthropics/claude-code-security-review@v1.0.0
+                with:
+                  claude-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+                  comment-pr: "true"
+                  custom-security-scan-instructions: "Focus on: ${{ github.event.pull_request.body }}"
+
+  - name: ccsr-pinned-to-a-branch
+    expect: [AIA004]
+    files:
+      .github/workflows/ai.yml: |
+        on:
+          pull_request:
+        permissions:
+          contents: read
+          pull-requests: write
+          security-events: write
+        jobs:
+          review:
+            runs-on: ubuntu-latest
+            steps:
+              - uses: actions/checkout@v4
+                with:
+                  fetch-depth: 2
+              - uses: anthropics/claude-code-security-review@main
+                with:
+                  claude-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+                  comment-pr: "true"
+
 composite:
   - name: composite-input-into-prompt
     expect: [AIA001]
@@ -2196,3 +2239,25 @@ safe:
                   BODY: ${{ github.event.issue.body }}
                 run: printf '%s' "$BODY" > /dev/null
               - run: openhands -t "Review the formatting rules."
+
+  - name: ccsr-documented-setup-pinned-to-a-sha
+    safe: true
+    files:
+      .github/workflows/ai.yml: |
+        on:
+          pull_request:
+        permissions:
+          contents: read
+          pull-requests: write
+          security-events: write
+        jobs:
+          review:
+            runs-on: ubuntu-latest
+            steps:
+              - uses: actions/checkout@v4
+                with:
+                  fetch-depth: 2
+              - uses: anthropics/claude-code-security-review@a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4
+                with:
+                  claude-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+                  comment-pr: "true"
