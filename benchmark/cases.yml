@@ -804,6 +804,81 @@ direct:
                 run: echo "task=$BODY" >> "$GITHUB_OUTPUT"
               - run: openhands --task "${{ steps.text.outputs.task }}"
 
+  - name: aider-message-from-issue-title
+    expect: [AIA001]
+    files:
+      .github/workflows/ai.yml: |
+        on:
+          issues:
+            types: [opened]
+        permissions:
+          contents: write
+        jobs:
+          fix:
+            runs-on: ubuntu-latest
+            steps:
+              - uses: actions/checkout@v4
+              - run: |
+                  aider --message "Fix the issue: ${{ github.event.issue.title }}"
+
+  - name: aider-yes-always-flagged
+    expect: [AIA002]
+    files:
+      .github/workflows/ai.yml: |
+        on: [workflow_dispatch]
+        jobs:
+          fix:
+            runs-on: ubuntu-latest
+            steps:
+              - uses: actions/checkout@v4
+              - run: aider --message "Fix the failing tests" --yes-always
+
+  - name: aider-short-flag-and-yes
+    expect: [AIA002]
+    files:
+      .github/workflows/ai.yml: |
+        on: [workflow_dispatch]
+        jobs:
+          fix:
+            runs-on: ubuntu-latest
+            steps:
+              - uses: actions/checkout@v4
+              - run: aider -m "Tidy the imports" --yes
+
+  - name: aider-uvx-package-from-issue-body
+    expect: [AIA001]
+    files:
+      .github/workflows/ai.yml: |
+        on:
+          issues:
+            types: [opened]
+        permissions:
+          contents: write
+        jobs:
+          fix:
+            runs-on: ubuntu-latest
+            steps:
+              - uses: actions/checkout@v4
+              - run: |
+                  uvx aider-chat --message "Fix: ${{ github.event.issue.body }}"
+
+  - name: aider-message-file-follows-outside-text
+    expect: [AIA001]
+    files:
+      .github/workflows/ai.yml: |
+        on:
+          issue_comment:
+            types: [created]
+        permissions:
+          contents: write
+        jobs:
+          respond:
+            runs-on: ubuntu-latest
+            steps:
+              - uses: actions/checkout@v4
+              - run: echo "${{ github.event.comment.body }}" > prompt.txt
+              - run: aider --message-file prompt.txt --yes-always
+
 composite:
   - name: composite-input-into-prompt
     expect: [AIA001]
@@ -2196,3 +2271,16 @@ safe:
                   BODY: ${{ github.event.issue.body }}
                 run: printf '%s' "$BODY" > /dev/null
               - run: openhands -t "Review the formatting rules."
+
+  - name: aider-help-stays-quiet
+    safe: true
+    files:
+      .github/workflows/ai.yml: |
+        on: [workflow_dispatch]
+        jobs:
+          help:
+            runs-on: ubuntu-latest
+            steps:
+              - uses: actions/checkout@v4
+              - run: pip install aider-chat
+              - run: aider --help
