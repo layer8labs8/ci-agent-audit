@@ -1414,6 +1414,46 @@ def _scan_github_job(
                                 )
                             )
 
+                    # AIA002: The same dangerous settings passed through `env:` reach
+                    # the CLI without appearing in the run text (e.g. GOOSE_MODE=auto
+                    # at workflow, job or step scope). Match the patterns against the
+                    # effective KEY=value assignments for this step.
+                    for flag_pat in cli_sig.dangerous_arg_patterns:
+                        env_hit = None
+                        for scope_name, scope in (("step", step_env), ("job", job_env), ("workflow", workflow_env)):
+                            if not isinstance(scope, Mapping):
+                                continue
+                            for env_key, env_value in scope.items():
+                                if re.search(flag_pat.pattern, f"{env_key}={env_value}"):
+                                    env_hit = (scope_name, scope, str(env_key))
+                                    break
+                            if env_hit:
+                                break
+                        if env_hit:
+                            scope_name, scope, env_key = env_hit
+                            if isinstance(scope, LineDict):
+                                env_line = scope.get_key_line(env_key, run_line)
+                                env_col = scope.get_key_col(env_key, step.get_key_col("run"))
+                            else:
+                                env_line, env_col = run_line, step.get_key_col("run")
+                            findings.append(
+                                _make_finding(
+                                    rule_id="AIA002",
+                                    file_path=file_path,
+                                    line=env_line,
+                                    col=env_col,
+                                    job_id=job_id,
+                                    step_name=step_name,
+                                    tool_id=cli_sig.id,
+                                    snippet=_get_snippet(raw_lines, env_line),
+                                    message=(
+                                        f"{cli_sig.name} invoked with dangerous flag matching "
+                                        f"`{flag_pat.pattern}`: {flag_pat.reason} "
+                                        f"(set via `env:` at {scope_name} scope)"
+                                    ),
+                                )
+                            )
+
             # AIA011: Job pushes to the default branch after an agent ran
             if (
                 has_ai_step

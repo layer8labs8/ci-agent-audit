@@ -804,6 +804,64 @@ direct:
                 run: echo "task=$BODY" >> "$GITHUB_OUTPUT"
               - run: openhands --task "${{ steps.text.outputs.task }}"
 
+  - name: goose-run-text-from-issue-body
+    expect: [AIA001]
+    files:
+      .github/workflows/ai.yml: |
+        on:
+          issues:
+            types: [labeled]
+        permissions:
+          contents: write
+        jobs:
+          agent:
+            runs-on: ubuntu-latest
+            steps:
+              - uses: actions/checkout@v4
+              - run: |
+                  curl -fsSL https://github.com/aaif-goose/goose/releases/download/stable/download_cli.sh | sh
+                  goose run --text "Fix this issue: ${{ github.event.issue.body }}"
+
+  - name: goose-mode-auto-in-step-env
+    expect: [AIA002]
+    files:
+      .github/workflows/ai.yml: |
+        on: [workflow_dispatch]
+        jobs:
+          agent:
+            runs-on: ubuntu-latest
+            steps:
+              - uses: actions/checkout@v4
+              - env:
+                  GOOSE_MODE: auto
+                run: goose run --text "Update the changelog"
+
+  - name: goose-mode-auto-in-job-env
+    expect: [AIA002]
+    files:
+      .github/workflows/ai.yml: |
+        on: [workflow_dispatch]
+        jobs:
+          agent:
+            runs-on: ubuntu-latest
+            env:
+              GOOSE_MODE: auto
+            steps:
+              - uses: actions/checkout@v4
+              - run: goose run --text "Update the changelog"
+
+  - name: goose-mode-auto-inline
+    expect: [AIA002]
+    files:
+      .github/workflows/ai.yml: |
+        on: [workflow_dispatch]
+        jobs:
+          agent:
+            runs-on: ubuntu-latest
+            steps:
+              - uses: actions/checkout@v4
+              - run: GOOSE_MODE=auto goose run --text "Update the docs"
+
 composite:
   - name: composite-input-into-prompt
     expect: [AIA001]
@@ -2196,3 +2254,15 @@ safe:
                   BODY: ${{ github.event.issue.body }}
                 run: printf '%s' "$BODY" > /dev/null
               - run: openhands -t "Review the formatting rules."
+
+  - name: goose-migration-tool-not-the-agent
+    safe: true
+    files:
+      .github/workflows/ai.yml: |
+        on: [push]
+        jobs:
+          migrate:
+            runs-on: ubuntu-latest
+            steps:
+              - uses: actions/checkout@v4
+              - run: goose -dir db/migrations postgres "$DATABASE_URL" up

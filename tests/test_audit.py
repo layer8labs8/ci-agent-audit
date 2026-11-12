@@ -380,3 +380,87 @@ jobs:
     sarif_data = json.loads(sarif_out.read_text(encoding="utf-8"))
     assert sarif_data["version"] == "2.1.0"
     assert len(sarif_data["runs"][0]["results"]) >= 2
+
+
+def test_goose_mode_auto_in_step_env_is_flagged(tmp_path: Path) -> None:
+    wf = tmp_path / "goose_step_env.yml"
+    wf.write_text(
+        """
+on: [workflow_dispatch]
+jobs:
+  agent:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - env:
+          GOOSE_MODE: auto
+        run: goose run --text "Update the changelog"
+""",
+        encoding="utf-8",
+    )
+    findings = scan_workflow_file(wf)
+    aia002 = [f for f in findings if f.rule_id == "AIA002"]
+    assert len(aia002) == 1
+    assert "GOOSE_MODE=auto" in aia002[0].message and "step scope" in aia002[0].message
+
+
+def test_goose_mode_auto_in_job_env_is_flagged(tmp_path: Path) -> None:
+    wf = tmp_path / "goose_job_env.yml"
+    wf.write_text(
+        """
+on: [workflow_dispatch]
+jobs:
+  agent:
+    runs-on: ubuntu-latest
+    env:
+      GOOSE_MODE: auto
+    steps:
+      - uses: actions/checkout@v4
+      - run: goose run --text "Update the changelog"
+""",
+        encoding="utf-8",
+    )
+    findings = scan_workflow_file(wf)
+    aia002 = [f for f in findings if f.rule_id == "AIA002"]
+    assert len(aia002) == 1
+    assert "job scope" in aia002[0].message
+
+
+def test_goose_mode_auto_in_workflow_env_is_flagged(tmp_path: Path) -> None:
+    wf = tmp_path / "goose_workflow_env.yml"
+    wf.write_text(
+        """
+on: [workflow_dispatch]
+env:
+  GOOSE_MODE: auto
+jobs:
+  agent:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: goose run --text "Update the changelog"
+""",
+        encoding="utf-8",
+    )
+    findings = scan_workflow_file(wf)
+    assert any(f.rule_id == "AIA002" for f in findings)
+
+
+def test_goose_env_without_an_invocation_is_quiet(tmp_path: Path) -> None:
+    wf = tmp_path / "goose_env_only.yml"
+    wf.write_text(
+        """
+on: [workflow_dispatch]
+env:
+  GOOSE_MODE: auto
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: echo "no agent here"
+""",
+        encoding="utf-8",
+    )
+    findings = scan_workflow_file(wf)
+    assert not any(f.rule_id == "AIA002" for f in findings)
