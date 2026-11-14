@@ -1474,6 +1474,20 @@ guards:
         #!/bin/sh
         claude -p "$BODY"
 
+  - name: openhands-cli-through-uv-run
+    expect: [AIA001]
+    files:
+      .github/workflows/ai.yml: |
+        on: [issues]
+        permissions:
+          contents: read
+        jobs:
+          ai:
+            runs-on: ubuntu-latest
+            steps:
+              - run: uv run openhands --task "${{ github.event.issue.body }}"
+
+
 gaps:
   - name: remote-reusable-workflow
     gap: true
@@ -1502,20 +1516,6 @@ gaps:
                 run: acme-agent run "$BODY"
 
   # OpenHands CLI misses, verified against the upstream argument parser.
-  - name: openhands-cli-through-uv-run
-    gap: true
-    expect: [AIA001]
-    files:
-      .github/workflows/ai.yml: |
-        on: [issues]
-        permissions:
-          contents: read
-        jobs:
-          ai:
-            runs-on: ubuntu-latest
-            steps:
-              - run: uv run openhands --task "${{ github.event.issue.body }}"
-
 safe:
   - name: trusted-prompt
     safe: true
