@@ -466,6 +466,19 @@ direct:
           script:
             - claude -p "Fix the docs" --dangerously-skip-permissions
 
+  - name: gitlab-pr-agent-container-image-latest
+    expect: [AIA001, AIA004]
+    files:
+      .gitlab-ci.yml: |
+          variables:
+            PR_REVIEWER__EXTRA_INSTRUCTIONS: $CI_MERGE_REQUEST_DESCRIPTION
+
+          review:
+            image: pragent/pr-agent:latest
+
+          script:
+            - echo "Starting review"
+
   - name: opencode-direct
     expect: [AIA001]
     files:
