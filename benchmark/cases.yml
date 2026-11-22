@@ -856,6 +856,47 @@ direct:
             steps:
               - run: openhands --headless --task "Review the formatting rules."
 
+  - name: sweagent-run-untrusted-problem-text
+    expect: [AIA001]
+    files:
+      .github/workflows/ai.yml: |
+        on:
+          issues:
+            types: [opened]
+        permissions:
+          contents: read
+        jobs:
+          fix:
+            runs-on: ubuntu-latest
+            steps:
+              - run: sweagent run --problem_statement.text="${{ github.event.issue.body }}"
+
+  - name: sweagent-run-batch-local-deployment
+    expect: [AIA002]
+    files:
+      .github/workflows/ai.yml: |
+        on: [workflow_dispatch]
+        permissions:
+          contents: read
+        jobs:
+          fix:
+            runs-on: ubuntu-latest
+            steps:
+              - run: sweagent run-batch --env.deployment.type=local
+
+  - name: sweagent-short-run-alias-local-deployment
+    expect: [AIA002]
+    files:
+      .github/workflows/ai.yml: |
+        on: [workflow_dispatch]
+        permissions:
+          contents: read
+        jobs:
+          fix:
+            runs-on: ubuntu-latest
+            steps:
+              - run: sweagent r --env.deployment.type=local
+
 composite:
   - name: composite-input-into-prompt
     expect: [AIA001]
@@ -2206,3 +2247,57 @@ safe:
                   BODY: ${{ github.event.issue.body }}
                 run: printf '%s' "$BODY" > /dev/null
               - run: openhands -t "Review the formatting rules."
+  - name: sweagent-inspect-is-not-an-agent-run
+    safe: true
+    files:
+      .github/workflows/ai.yml: |
+        on: [workflow_dispatch]
+        permissions:
+          contents: read
+        jobs:
+          inspect:
+            runs-on: ubuntu-latest
+            steps:
+              - run: sweagent inspect trajectory.traj
+
+  - name: sweagent-merge-preds-is-not-an-agent-run
+    safe: true
+    files:
+      .github/workflows/ai.yml: |
+        on: [workflow_dispatch]
+        permissions:
+          contents: read
+        jobs:
+          merge:
+            runs-on: ubuntu-latest
+            steps:
+              - run: sweagent merge-preds predictions/
+
+  - name: sweagent-docker-deployment-is-not-host-local
+    safe: true
+    allow: [AIA006]
+    files:
+      .github/workflows/ai.yml: |
+        on: [workflow_dispatch]
+        permissions:
+          contents: read
+        jobs:
+          fix:
+            runs-on: ubuntu-latest
+            steps:
+              - run: sweagent run --env.deployment.type=docker --problem_statement.text="Review the repository."
+
+  - name: sweagent-modal-deployment-is-not-host-local
+    safe: true
+    allow: [AIA006]
+    files:
+      .github/workflows/ai.yml: |
+        on: [workflow_dispatch]
+        permissions:
+          contents: read
+        jobs:
+          fix:
+            runs-on: ubuntu-latest
+            steps:
+              - run: sweagent run --env.deployment.type=modal --problem_statement.text="Review the repository."
+

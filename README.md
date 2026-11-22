@@ -248,15 +248,15 @@ Exit codes: `0` means nothing reached the `--fail-on` level, `1` means something
 
 ## How accurate is it?
 
-Every change runs against [`benchmark/cases.yml`](https://github.com/layer8labs8/ci-agent-audit/blob/main/benchmark/cases.yml), 123 small repositories labelled with what must fire and what must stay quiet.
+Every change runs against [`benchmark/cases.yml`](https://github.com/layer8labs8/ci-agent-audit/blob/main/benchmark/cases.yml), 130 small repositories labelled with what must fire and what must stay quiet.
 
 | Cases                     | Number | Findings caught | Missed | False alarms |
 | :------------------------ | -----: | --------------: | -----: | -----------: |
-| Direct risks              |     58 |              59 |      0 |            0 |
+| Direct risks              |     61 |              62 |      0 |            0 |
 | Local composite actions   |     10 |              10 |      0 |            0 |
 | Reusable workflows        |      8 |               8 |      0 |            0 |
-| Guard and data-flow traps |      9 |               9 |      0 |            0 |
-| Safe setups               |     35 |              10 |      0 |            0 |
+| Guard and data-flow traps |     10 |               9 |      0 |            0 |
+| Safe setups               |     39 |              10 |      0 |            0 |
 | Known gaps                |      2 |               0 |      2 |            0 |
 
 That's 98.0% recall and 100% precision on these cases. We wrote them ourselves, so treat this as a regression check and not a promise about your repository. The two remaining misses are a remote reusable workflow and a tool without a signature yet. The OpenHands report adds known misses without changing the scanner engine.
