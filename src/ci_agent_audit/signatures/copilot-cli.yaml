@@ -1,0 +1,29 @@
+id: copilot-cli
+name: GitHub Copilot CLI
+vendor: GitHub
+description: GitHub Copilot CLI agent used for automated coding, review and shell tasks in CI workflows.
+cli_binaries:
+  - copilot
+cli_packages:
+  - "@github/copilot"
+cli_prompt_flags:
+  - -p
+  - --prompt
+  - -i
+  - --interactive
+dangerous_inputs: {}
+dangerous_arg_patterns:
+  - pattern: "--allow-all-tools"
+    reason: "Lets Copilot CLI run every tool, including shell commands and file writes, without approval prompts."
+  - pattern: "(?:^|\\s)--allow-all(?:\\s|$)"
+    reason: "Grants Copilot CLI every permission at once: all tools, all file paths and all URLs, without approval."
+  - pattern: "--yolo"
+    reason: "Alias for --allow-all: grants Copilot CLI all tools, paths and URLs without approval."
+  - pattern: "--allow-all-paths"
+    reason: "Disables Copilot CLI file path verification, so the agent can read and write any path on the runner."
+  - pattern: "--allow-all-urls"
+    reason: "Lets Copilot CLI fetch any URL without confirmation, including internal or metadata endpoints."
+  - pattern: "--no-sandbox"
+    reason: "Disables the Copilot CLI OS-level shell sandbox for the session."
+  - pattern: "shell\\(\\*\\)"
+    reason: "Grants the agent unrestricted shell command execution through --allow-tool."
